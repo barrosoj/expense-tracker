@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="pt-PT">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<title>Quadro de Tarefas</title>
+<!-- iOS: torna possível "Adicionar ao ecrã principal" e abrir em ecrã inteiro, sem a barra do Safari -->
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Quadro Tarefas" />
+<meta name="theme-color" content="#2F6659" />
+<link rel="apple-touch-icon" href="icon.png" />
+<link rel="icon" type="image/png" href="icon.png" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<div class="auth-screen" id="authScreen" hidden>
+  <div class="auth-card">
+    <img src="icon.png" alt="" class="auth-logo" width="56" height="56" />
+    <h1>Quadro de Tarefas</h1>
+    <p class="subtitle">Entra para sincronizar os teus dados entre dispositivos.</p>
+
+    <div id="authStepEmail">
+      <div class="auth-providers" id="authProviders"></div>
+      <p class="hint auth-ios-hint" id="authIOSHint" hidden>No ecrã principal do iPhone/iPad, usa o código por email — a entrada com Google/Apple/GitHub abre no Safari e a sessão fica lá.</p>
+      <div class="auth-divider" id="authDivider"><span>ou com código por email</span></div>
+      <form id="authEmailForm" class="auth-form" novalidate>
+        <div class="field">
+          <label for="authEmail">Email</label>
+          <input type="text" id="authEmail" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" placeholder="nome@exemplo.pt" />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Enviar código</button>
+      </form>
+    </div>
+
+    <div id="authStepCode" hidden>
+      <form id="authCodeForm" class="auth-form" novalidate>
+        <p class="auth-sent">Código enviado para <strong id="authCodeEmail"></strong></p>
+        <div class="field">
+          <label for="authCode">Código</label>
+          <input type="text" id="authCode" class="auth-code-input mono" inputmode="numeric" autocomplete="one-time-code" maxlength="10" placeholder="000000" />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Entrar</button>
+        <div class="auth-secondary">
+          <button type="button" class="btn btn-ghost btn-sm" id="authBackBtn">‹ Outro email</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="authResendBtn">Reenviar código</button>
+        </div>
+      </form>
+    </div>
+
+    <p class="auth-message" id="authMessage" role="status" aria-live="polite"></p>
+  </div>
+</div>
+
+<div class="app" hidden>
+  <div class="banner warn" id="fatalErrorBanner" hidden>
+    <span>Ocorreu um erro ao iniciar a aplicação neste navegador.</span>
+    <button type="button" id="dismissFatalError">Fechar</button>
+  </div>
+  <header class="topbar">
+    <div class="topbar-main">
+      <h1>Quadro de Tarefas</h1>
+      <p class="subtitle">Versão offline — funciona sem ligação à internet, guardada neste navegador.</p>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-ghost btn-sm" id="exportBtn">Exportar cópia</button>
+      <button class="btn btn-ghost btn-sm" id="importBtn">Importar cópia</button>
+      <input type="file" id="importFileInput" accept="application/json" hidden />
+      <button class="btn btn-ghost" id="manageClientsBtn">Gerir clientes</button>
+      <button class="btn btn-primary" id="newItemBtn">+ Nova tarefa</button>
+    </div>
+    <div class="account-box" id="accountBox" hidden>
+      <span class="account-email" id="accountEmail"></span>
+      <button type="button" class="btn btn-ghost btn-sm" id="signOutBtn">Terminar sessão</button>
+    </div>
+  </header>
+
+  <div class="view-tabs" id="viewTabs">
+    <button type="button" data-view="tasks" class="active">Tarefas</button>
+    <button type="button" data-view="meetings">Reuniões</button>
+    <button type="button" data-view="projects">Projetos</button>
+    <button type="button" data-view="expenses">Despesas</button>
+  </div>
+
+  <div class="banner warn" id="storageWarning" hidden>
+    <span>Os dados desta página ficam guardados apenas neste navegador, neste computador. Usa "Exportar cópia" regularmente para não os perderes.</span>
+    <button id="dismissWarning">Percebido</button>
+  </div>
+
+  <div class="banner" id="installAppBanner" hidden>
+    <span>Para usar isto como app, com ícone próprio e em ecrã inteiro: toca no ícone de Partilhar (quadrado com seta) e depois em "Adicionar ao Ecrã Principal".</span>
+    <button id="dismissInstallBanner">Percebido</button>
+  </div>
+
+  <div class="banner" id="onboardBanner" hidden>
+    <span>Isto é um modelo de exemplo — substitui os clientes, tarefas, reuniões, projetos e despesas pelos teus quando quiseres.</span>
+    <button id="dismissBanner">Percebido</button>
+  </div>
+
+  <div class="filters" id="filters"></div>
+
+  <main class="board" id="board"></main>
+
+  <div class="meetings-view" id="meetingsView" hidden>
+    <div class="meetings-list" id="meetingsList"></div>
+    <button type="button" class="btn btn-ghost btn-block" id="addMeetingBottomBtn">+ Nova reunião</button>
+  </div>
+
+  <div class="projects-view" id="projectsView" hidden>
+    <div class="projects-list" id="projectsList"></div>
+    <button type="button" class="btn btn-ghost btn-block" id="addProjectBottomBtn">+ Novo projeto</button>
+  </div>
+
+  <div class="expenses-view" id="expensesView" hidden>
+    <div class="expenses-toolbar">
+      <div class="month-nav">
+        <button type="button" class="icon-btn" id="prevMonthBtn" title="Mês anterior">‹</button>
+        <div class="month-nav-label mono" id="monthLabel"></div>
+        <button type="button" class="icon-btn" id="nextMonthBtn" title="Mês seguinte">›</button>
+      </div>
+      <button type="button" class="btn btn-ghost btn-sm" id="exportExpensesBtn">Exportar CSV</button>
+      <span class="expenses-export-status" id="expensesExportStatus"></span>
+    </div>
+    <div class="expenses-table-wrap">
+      <table class="expenses-table" id="expensesTable"></table>
+    </div>
+    <button type="button" class="btn btn-ghost btn-block" id="addExpenseBottomBtn">+ Nova despesa</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="taskModalOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="taskModalTitle">
+    <h2 id="taskModalTitle">Nova tarefa</h2>
+
+    <div class="field">
+      <label for="taskTitle">Título</label>
+      <input type="text" id="taskTitle" maxlength="140" placeholder="Ex: Enviar proposta atualizada" />
+    </div>
+
+    <div class="field">
+      <label for="taskClient">Cliente</label>
+      <select id="taskClient"></select>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label>Prioridade</label>
+        <div class="segmented" id="prioritySeg" data-value="media">
+          <button type="button" data-val="baixa">Baixa</button>
+          <button type="button" data-val="media">Média</button>
+          <button type="button" data-val="alta">Alta</button>
+        </div>
+      </div>
+      <div class="field">
+        <label for="taskDue">Prazo</label>
+        <input type="date" id="taskDue" />
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Estado</label>
+      <div class="segmented" id="statusSeg" data-value="todo">
+        <button type="button" data-val="todo">A Fazer</button>
+        <button type="button" data-val="doing">Em Curso</button>
+        <button type="button" data-val="done">Concluído</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="taskNotes">Notas</label>
+      <textarea id="taskNotes" maxlength="600" placeholder="Detalhes, contexto, links..."></textarea>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="deleteTaskBtn" hidden>Eliminar</button>
+      <div class="modal-actions-right">
+        <button class="btn btn-ghost" id="cancelTaskBtn">Cancelar</button>
+        <button class="btn btn-primary" id="saveTaskBtn">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="meetingModalOverlay" hidden>
+  <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="meetingModalTitle">
+    <h2 id="meetingModalTitle">Nova reunião</h2>
+
+    <div class="field-row">
+      <div class="field" style="flex:2">
+        <label for="meetingTitle">Título</label>
+        <input type="text" id="meetingTitle" maxlength="140" placeholder="Ex: Reunião de alinhamento" />
+      </div>
+      <div class="field">
+        <label for="meetingDate">Data</label>
+        <input type="date" id="meetingDate" />
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="meetingClient">Cliente</label>
+      <select id="meetingClient"></select>
+    </div>
+
+    <div class="field">
+      <label for="meetingAgenda">Preparação <span class="hint-inline">— antes da reunião: objetivos, pontos a abordar</span></label>
+      <textarea id="meetingAgenda" maxlength="1500" placeholder="O que queres alcançar, pontos da agenda, informação a rever..."></textarea>
+    </div>
+
+    <div class="field">
+      <label for="meetingNotes">Notas <span class="hint-inline">— durante a reunião</span></label>
+      <textarea id="meetingNotes" maxlength="3000" placeholder="Notas ao vivo..."></textarea>
+    </div>
+
+    <div class="field">
+      <label for="meetingSummary">Resumo <span class="hint-inline">— depois: decisões tomadas</span></label>
+      <textarea id="meetingSummary" maxlength="1500" placeholder="Principais decisões e conclusões..."></textarea>
+    </div>
+
+    <div class="field">
+      <label>Ações a seguir</label>
+      <div class="actions-list" id="actionsDraftList"></div>
+      <div class="actions-add">
+        <input type="text" id="newActionInput" maxlength="200" placeholder="Adicionar ação e Enter..." />
+        <button type="button" class="btn btn-ghost btn-sm" id="addActionBtn">Adicionar</button>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="deleteMeetingBtn" hidden>Eliminar</button>
+      <div class="modal-actions-right">
+        <button class="btn btn-ghost" id="cancelMeetingBtn">Cancelar</button>
+        <button class="btn btn-primary" id="saveMeetingBtn">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="projectModalOverlay" hidden>
+  <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="projectModalTitle">
+    <h2 id="projectModalTitle">Novo projeto</h2>
+
+    <div class="field">
+      <label for="projectName">Nome do projeto</label>
+      <input type="text" id="projectName" maxlength="140" placeholder="Ex: Renovação do contrato anual" />
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="projectClient">Cliente</label>
+        <select id="projectClient"></select>
+      </div>
+      <div class="field">
+        <label>Estado</label>
+        <div class="segmented" id="projectStatusSeg" data-value="ativo">
+          <button type="button" data-val="ativo">Ativo</button>
+          <button type="button" data-val="pausado">Pausado</button>
+          <button type="button" data-val="concluido">Concluído</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="projectDescription">Descrição</label>
+      <textarea id="projectDescription" maxlength="1500" placeholder="Objetivo do projeto, âmbito, notas..."></textarea>
+    </div>
+
+    <div class="field">
+      <label>Documentos <span class="hint-inline">— guardados neste navegador</span></label>
+      <div class="documents-list" id="documentsDraftList"></div>
+      <div class="document-add">
+        <button type="button" class="btn btn-ghost btn-sm" id="addDocumentBtn">+ Anexar ficheiro</button>
+        <input type="file" id="documentFileInput" hidden multiple />
+        <span class="document-add-status" id="documentAddStatus"></span>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="deleteProjectBtn" hidden>Eliminar</button>
+      <div class="modal-actions-right">
+        <button class="btn btn-ghost" id="cancelProjectBtn">Cancelar</button>
+        <button class="btn btn-primary" id="saveProjectBtn">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="expenseModalOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="expenseModalTitle">
+    <h2 id="expenseModalTitle">Nova despesa</h2>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="expenseDate">Data</label>
+        <input type="date" id="expenseDate" />
+      </div>
+      <div class="field">
+        <label for="expenseAmount">Valor (€)</label>
+        <input type="text" id="expenseAmount" inputmode="decimal" placeholder="0,00" />
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Categoria</label>
+      <div class="segmented" id="expenseCategorySeg" data-value="deslocacoes">
+        <button type="button" data-val="deslocacoes">Deslocações</button>
+        <button type="button" data-val="refeicoes">Refeições</button>
+        <button type="button" data-val="alojamento">Alojamento</button>
+        <button type="button" data-val="material">Material</button>
+      </div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="expenseClient">Cliente <span class="hint-inline">— opcional</span></label>
+        <select id="expenseClient"></select>
+      </div>
+      <div class="field">
+        <label for="expenseSupplier">Fornecedor <span class="hint-inline">— opcional</span></label>
+        <input type="text" id="expenseSupplier" maxlength="80" placeholder="Ex: Galp, Continente..." />
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="expenseDescription">Descrição</label>
+      <input type="text" id="expenseDescription" maxlength="140" placeholder="Ex: Almoço com cliente, portagens A1..." />
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-danger" id="deleteExpenseBtn" hidden>Eliminar</button>
+      <div class="modal-actions-right">
+        <button class="btn btn-ghost" id="cancelExpenseBtn">Cancelar</button>
+        <button class="btn btn-primary" id="saveExpenseBtn">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="dayExpensesModalOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dayExpensesTitle">
+    <h2 id="dayExpensesTitle">Despesas do dia</h2>
+    <div class="day-expenses-list" id="dayExpensesList"></div>
+    <div class="modal-actions">
+      <div></div>
+      <div class="modal-actions-right">
+        <button class="btn btn-ghost" id="closeDayExpensesBtn">Fechar</button>
+        <button class="btn btn-primary" id="addDayExpenseBtn">+ Adicionar despesa</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="clientsModalOverlay" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="clientsModalTitle">
+    <h2 id="clientsModalTitle">Gerir clientes</h2>
+    <div class="clients-list" id="clientsList"></div>
+    <div class="client-add-row">
+      <input type="text" id="newClientName" maxlength="60" placeholder="Nome do novo cliente" />
+      <button class="btn btn-primary btn-sm" id="addClientBtn">Adicionar</button>
+    </div>
+    <p class="hint">Eliminar um cliente não apaga tarefas, reuniões ou projetos associados — ficam marcados como "Sem cliente".</p>
+    <div class="modal-actions">
+      <div></div>
+      <button class="btn btn-ghost" id="closeClientsBtn">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<script src="config.js"></script>
+<script src="vendor/supabase.js"></script>
+<script src="app.js"></script>
+<script src="auth.js"></script>
+</body>
+</html>

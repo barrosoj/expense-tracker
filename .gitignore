@@ -1,0 +1,10 @@
+*:Zone.Identifier
+# original single-file version (kept locally only)
+Quadro de Tarefas*.html
+.DS_Store
+node_modules/
+.env
+.env.*
+# personal data backups exported from the app
+quadro-tarefas-copia-*.json
+despesas-*.csv
