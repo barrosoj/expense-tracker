@@ -18,11 +18,13 @@
 
   function $(id){ return document.getElementById(id); }
   function localKey(){ return "qt_sync_shadow:" + userId; }
-  function setStatus(text, error){
+  function lastSyncKey(){ return "qt_last_sync_at:" + userId; }
+  function showLastSync(timestamp){
     if (!statusEl) statusEl = $("syncStatus");
     if (!statusEl) return;
-    statusEl.textContent = text;
-    statusEl.classList.toggle("error", !!error);
+    statusEl.textContent = timestamp
+      ? "Última sincronização: " + new Date(timestamp).toLocaleTimeString("pt-PT", { hour:"2-digit", minute:"2-digit" })
+      : "Ainda não sincronizado";
   }
   function clone(value){ return JSON.parse(JSON.stringify(value)); }
   function blankData(){ return { clients:{}, tasks:{}, meetings:{}, projects:{}, expenses:{} }; }
@@ -174,16 +176,14 @@
   function syncNow(){
     if (!running) return Promise.resolve();
     if (inFlight){ rerunRequested = true; return Promise.resolve(); }
-    if (!navigator.onLine){ setStatus("Offline — alterações guardadas neste dispositivo", false); return Promise.resolve(); }
+    if (!navigator.onLine) return Promise.resolve();
     inFlight = true;
-    setStatus("A sincronizar…", false);
     return mergeAndSync().then(function(){
       lastSyncAt = Date.now();
-      setStatus("Sincronizado " + new Date(lastSyncAt).toLocaleTimeString("pt-PT", { hour:"2-digit", minute:"2-digit" }), false);
+      try { localStorage.setItem(lastSyncKey(), String(lastSyncAt)); } catch(e){}
+      showLastSync(lastSyncAt);
     }).catch(function(err){
       console.error("sync failed", err);
-      var msg = err && err.message ? err.message : "erro desconhecido";
-      setStatus("Sync falhou — " + msg, true);
     }).then(function(){
       inFlight = false;
       if (rerunRequested){ rerunRequested = false; syncNow(); }
@@ -191,7 +191,6 @@
   }
   function localChanged(){
     if (!running) return;
-    setStatus(navigator.onLine ? "Alterações por sincronizar…" : "Offline — alterações guardadas neste dispositivo", false);
     clearTimeout(debounce);
     debounce = setTimeout(syncNow, 700);
   }
@@ -204,6 +203,8 @@
     running = !!(userId && client);
     if (!running) return;
     statusEl = $("syncStatus");
+    try { lastSyncAt = Number(localStorage.getItem(lastSyncKey())) || 0; } catch(e){ lastSyncAt = 0; }
+    showLastSync(lastSyncAt);
     syncNow();
     timer = setInterval(syncNow, POLL_MS);
     window.addEventListener("online", syncNow);

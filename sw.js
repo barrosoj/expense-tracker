@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so the app works offline once loaded.
-// Bump CACHE_VERSION whenever index.html, styles.css or app.js change.
-var CACHE_VERSION = "v11";
+// Bump CACHE_VERSION whenever an app-shell file changes.
+var CACHE_VERSION = "v14";
 var CACHE_NAME = "quadro-tarefas-" + CACHE_VERSION;
 var APP_SHELL = [
   "./",
@@ -8,6 +8,7 @@ var APP_SHELL = [
   "./styles.css",
   "./config.js",
   "./vendor/supabase.js",
+  "./receipt.js",
   "./app.js",
   "./sync.js",
   "./auth.js",

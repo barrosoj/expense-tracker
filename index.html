@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://koqetdjtgecjpmckzeld.supabase.co; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://koqetdjtgecjpmckzeld.supabase.co https://cdn.jsdelivr.net https://tessdata.projectnaptha.com; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
 <title>Quadro de Tarefas</title>
 <!-- iOS: torna possível "Adicionar ao ecrã principal" e abrir em ecrã inteiro, sem a barra do Safari -->
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -76,10 +76,9 @@
           <button type="button" class="btn btn-ghost btn-sm" id="importBtn">Importar cópia</button>
           <input type="file" id="importFileInput" accept="application/json" hidden />
           <div class="account-box" id="accountBox" hidden>
-            <span class="sync-status" id="syncStatus" role="status">A preparar sincronização…</span>
+            <span class="sync-status" id="syncStatus" role="status">Ainda não sincronizado</span>
             <button type="button" class="btn btn-ghost btn-sm" id="syncNowBtn">Sincronizar agora</button>
             <button type="button" class="btn btn-ghost btn-sm" id="signOutBtn">Terminar sessão</button>
-            <button type="button" class="btn btn-danger btn-sm" id="signOutAllBtn" title="Termina a sessão desta conta em todos os dispositivos">Sair de todos</button>
           </div>
         </div>
       </details>
@@ -94,7 +93,7 @@
   </nav>
 
   <div class="banner warn" id="storageWarning" hidden>
-    <span>A cópia offline fica neste navegador. Confirma que o estado diz "Sincronizado" e exporta cópias de segurança regularmente.</span>
+    <span>A aplicação guarda uma cópia neste dispositivo e sincroniza quando há ligação. Exporta cópias de segurança regularmente.</span>
     <button id="dismissWarning">Percebido</button>
   </div>
 
@@ -305,6 +304,12 @@
       </div>
     </div>
 
+    <div class="receipt-scan field">
+      <button type="button" class="btn btn-ghost btn-sm" id="scanReceiptBtn">Fotografar recibo</button>
+      <input type="file" id="receiptFileInput" accept="image/*" capture="environment" hidden />
+      <span class="receipt-scan-status" id="receiptScanStatus" role="status" aria-live="polite">A foto sugere os campos; confirma ou edita antes de guardar.</span>
+    </div>
+
     <div class="field">
       <label>Categoria</label>
       <div class="segmented" id="expenseCategorySeg" data-value="deslocacoes">
@@ -373,6 +378,8 @@
 
 <script src="config.js"></script>
 <script src="vendor/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" integrity="sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F" crossorigin="anonymous"></script>
+<script src="receipt.js"></script>
 <script src="app.js"></script>
 <script src="sync.js"></script>
 <script src="auth.js"></script>

@@ -970,6 +970,47 @@
   }
 
   // ---------- expense modal ----------
+  function setReceiptScanStatus(message, isError){
+    var status = document.getElementById("receiptScanStatus");
+    status.textContent = message;
+    status.classList.toggle("error", !!isError);
+  }
+  function scanReceipt(file){
+    var button = document.getElementById("scanReceiptBtn");
+    button.disabled = true;
+    setReceiptScanStatus("A preparar a leitura do recibo…", false);
+    return window.ReceiptScanner.scan(file, function(progress){
+      if (!progress || !progress.status) return;
+      var labels = {
+        "loading tesseract core":"A carregar o motor OCR…",
+        "loading language traineddata":"A carregar o modelo português…",
+        "initializing tesseract":"A iniciar o motor OCR…",
+        "initializing api":"A preparar o reconhecimento…",
+        "recognizing text":"A ler o recibo…"
+      };
+      var label = labels[progress.status];
+      if (label){
+        var percent = Number.isFinite(progress.progress) ? " " + Math.round(progress.progress * 100) + "%" : "";
+        setReceiptScanStatus(label + percent, false);
+      }
+    }).then(function(suggestion){
+      if (suggestion.amount) document.getElementById("expenseAmount").value = suggestion.amount.toFixed(2).replace(".", ",");
+      if (suggestion.supplier) document.getElementById("expenseSupplier").value = suggestion.supplier;
+      if (suggestion.description) document.getElementById("expenseDescription").value = suggestion.description;
+      var found = [];
+      if (suggestion.amount) found.push("valor");
+      if (suggestion.description) found.push("descrição");
+      setReceiptScanStatus(found.length
+        ? "Sugestão preenchida (" + found.join(" e ") + "). Revê ou edita antes de guardar."
+        : "Não foi possível sugerir campos. Podes preencher manualmente.", false);
+    }).catch(function(error){
+      console.error("receipt scan failed", error);
+      setReceiptScanStatus(error && error.message ? error.message : "Não foi possível ler o recibo. Podes preencher manualmente.", true);
+    }).then(function(){
+      button.disabled = false;
+    });
+  }
+
   function openExpenseModal(id, presetDate){
     editingExpenseId = id || null;
     var overlay = document.getElementById("expenseModalOverlay");
@@ -996,6 +1037,7 @@
       document.getElementById("expenseDescription").value = "";
       deleteBtn.hidden = true;
     }
+    setReceiptScanStatus("A foto sugere os campos; confirma ou edita antes de guardar.", false);
     overlay.hidden = false;
     setTimeout(function(){ document.getElementById("expenseAmount").focus(); }, 0);
   }
@@ -1182,6 +1224,12 @@
 
     document.getElementById("cancelExpenseBtn").addEventListener("click", closeExpenseModal);
     document.getElementById("saveExpenseBtn").addEventListener("click", saveExpenseFromModal);
+    document.getElementById("scanReceiptBtn").addEventListener("click", function(){ document.getElementById("receiptFileInput").click(); });
+    document.getElementById("receiptFileInput").addEventListener("change", function(e){
+      var file = e.target.files && e.target.files[0];
+      if (file) scanReceipt(file);
+      e.target.value = "";
+    });
     document.getElementById("deleteExpenseBtn").addEventListener("click", function(){
       var btn = document.getElementById("deleteExpenseBtn");
       if (btn.dataset.confirming === "1"){ deleteEditingExpense(); }
