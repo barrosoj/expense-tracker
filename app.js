@@ -157,36 +157,11 @@
   // ---------- storage ----------
   function defaultSeed(){
     return {
-      clients: {
-        c1: { name:"Cliente A", color:"#2F6659", order:1 },
-        c2: { name:"Cliente B", color:"#8A5A2E", order:2 },
-        c3: { name:"Cliente C", color:"#3D5A80", order:3 }
-      },
-      tasks: {
-        t1: { clientId:"c1", title:"Enviar proposta atualizada", notes:"Incluir os novos valores acordados na última chamada.", priority:"alta", status:"doing", due:"", createdAt:1, updatedAt:1 },
-        t2: { clientId:"c1", title:"Preparar relatório mensal", notes:"", priority:"media", status:"todo", due:"", createdAt:2, updatedAt:2 },
-        t3: { clientId:"c2", title:"Reunião de alinhamento semanal", notes:"", priority:"baixa", status:"todo", due:"", createdAt:3, updatedAt:3 },
-        t4: { clientId:"c2", title:"Rever contrato de renovação", notes:"Confirmar cláusulas com o jurídico.", priority:"alta", status:"doing", due:"", createdAt:4, updatedAt:4 },
-        t5: { clientId:"c3", title:"Follow-up pós-reunião", notes:"", priority:"media", status:"done", due:"", createdAt:5, updatedAt:5 },
-        t6: { clientId:"c3", title:"Configurar acesso ao portal", notes:"", priority:"baixa", status:"todo", due:"", createdAt:6, updatedAt:6 },
-        t7: { clientId:"c1", title:"Atualizar cronograma do projeto", notes:"", priority:"media", status:"done", due:"", createdAt:7, updatedAt:7 }
-      },
-      meetings: {
-        m1: { clientId:"c1", title:"Reunião de alinhamento mensal", date:"", agenda:"Rever ponto de situação do projeto e próximos marcos.", notes:"Discutidos prazos de entrega e necessidade de orçamento adicional.", summary:"Cliente aceitou a proposta revista; aguardamos confirmação por escrito.", actions:[{id:"a1",text:"Enviar confirmação por email",done:true},{id:"a2",text:"Atualizar cronograma do projeto",done:false}], createdAt:1, updatedAt:1 },
-        m2: { clientId:"c2", title:"Reunião de kickoff", date:"", agenda:"Apresentar a equipa envolvida e definir o plano de trabalho inicial.", notes:"", summary:"", actions:[{id:"a3",text:"Preparar plano de projeto detalhado",done:false}], createdAt:2, updatedAt:2 },
-        m3: { clientId:"c3", title:"Reunião de follow-up", date:"", agenda:"", notes:"Cliente reportou um pequeno atraso na entrega dos materiais.", summary:"Acordado um novo prazo de entrega para o final do mês.", actions:[{id:"a4",text:"Confirmar novo prazo por email",done:true}], createdAt:3, updatedAt:3 }
-      },
-      projects: {
-        p1: { clientId:"c1", name:"Renovação do contrato anual", status:"ativo", description:"Negociar e formalizar a renovação do contrato de fornecimento para o próximo ano.", documents:[], createdAt:1, updatedAt:1 },
-        p2: { clientId:"c2", name:"Implementação do novo equipamento", status:"pausado", description:"Instalação e arranque do novo equipamento adquirido — em espera por confirmação de data com o cliente.", documents:[], createdAt:2, updatedAt:2 },
-        p3: { clientId:"c1", name:"Levantamento técnico inicial", status:"concluido", description:"Visita e levantamento das necessidades técnicas do cliente.", documents:[], createdAt:3, updatedAt:3 }
-      },
-      expenses: {
-        e1: { clientId:"c1", date:daysAgoStr(6), category:"deslocacoes", supplier:"", description:"Portagens - visita ao cliente", amount:18.4, createdAt:1, updatedAt:1 },
-        e2: { clientId:"c1", date:daysAgoStr(6), category:"refeicoes", supplier:"", description:"Almoço de trabalho", amount:24.5, createdAt:2, updatedAt:2 },
-        e3: { clientId:null, date:daysAgoStr(3), category:"deslocacoes", supplier:"Galp", description:"Combustível", amount:45, createdAt:3, updatedAt:3 },
-        e4: { clientId:"c2", date:daysAgoStr(2), category:"alojamento", supplier:"", description:"Dormida - reunião de kickoff", amount:62, createdAt:4, updatedAt:4 }
-      }
+      clients: {},
+      tasks: {},
+      meetings: {},
+      projects: {},
+      expenses: {}
     };
   }
 
@@ -565,7 +540,11 @@
       row.appendChild(el("div", "expense-cat-badge expense-cat-" + (x.category || "material"), EXPENSE_CATEGORY_LABEL[x.category] || "Material"));
       var descWrap = el("div", "day-expense-desc");
       descWrap.textContent = x.description || "";
-      if (x.supplier) descWrap.appendChild(el("span", "hint-inline", " — " + x.supplier));
+      if (x.supplier){
+        var supplier = el("span", "hint-inline");
+        supplier.textContent = " — " + x.supplier;
+        descWrap.appendChild(supplier);
+      }
       row.appendChild(descWrap);
       row.appendChild(el("div", "day-expense-amount mono", formatCurrency(x.amount)));
       row.addEventListener("click", function(){ closeDayExpensesModal(); openExpenseModal(id); });
@@ -1126,6 +1105,8 @@
     currentView = view;
     Array.prototype.forEach.call(document.querySelectorAll("#viewTabs button"), function(btn){
       btn.classList.toggle("active", btn.dataset.view === view);
+      if (btn.dataset.view === view) btn.setAttribute("aria-current", "page");
+      else btn.removeAttribute("aria-current");
     });
     var labels = { tasks:"+ Nova tarefa", meetings:"+ Nova reunião", projects:"+ Novo projeto", expenses:"+ Nova despesa" };
     document.getElementById("newItemBtn").textContent = labels[view] || "+ Novo";
@@ -1240,14 +1221,6 @@
     document.getElementById("dismissWarning").addEventListener("click", function(){
       document.getElementById("storageWarning").hidden = true;
       try { localStorage.setItem("qt_storage_warning_dismissed", "1"); } catch(e){}
-    });
-
-    var dismissedBanner = false;
-    try { dismissedBanner = localStorage.getItem("qt_banner_dismissed"); } catch(e){}
-    if (!dismissedBanner) document.getElementById("onboardBanner").hidden = false;
-    document.getElementById("dismissBanner").addEventListener("click", function(){
-      document.getElementById("onboardBanner").hidden = true;
-      try { localStorage.setItem("qt_banner_dismissed", "1"); } catch(e){}
     });
 
     try {

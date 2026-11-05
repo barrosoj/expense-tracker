@@ -2,7 +2,8 @@
 <html lang="pt-PT">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://koqetdjtgecjpmckzeld.supabase.co; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
 <title>Quadro de Tarefas</title>
 <!-- iOS: torna possível "Adicionar ao ecrã principal" e abrir em ecrã inteiro, sem a barra do Safari -->
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -73,7 +74,6 @@
       <button class="btn btn-primary" id="newItemBtn">+ Nova tarefa</button>
     </div>
     <div class="account-box" id="accountBox" hidden>
-      <span class="account-email" id="accountEmail"></span>
       <span class="sync-status" id="syncStatus" role="status">A preparar sincronização…</span>
       <button type="button" class="btn btn-ghost btn-sm" id="syncNowBtn">Sincronizar agora</button>
       <button type="button" class="btn btn-ghost btn-sm" id="signOutBtn">Terminar sessão</button>
@@ -81,12 +81,12 @@
     </div>
   </header>
 
-  <div class="view-tabs" id="viewTabs">
-    <button type="button" data-view="tasks" class="active">Tarefas</button>
+  <nav class="view-tabs" id="viewTabs" aria-label="Secções principais">
+    <button type="button" data-view="tasks" class="active" aria-current="page">Tarefas</button>
     <button type="button" data-view="meetings">Reuniões</button>
     <button type="button" data-view="projects">Projetos</button>
     <button type="button" data-view="expenses">Despesas</button>
-  </div>
+  </nav>
 
   <div class="banner warn" id="storageWarning" hidden>
     <span>A cópia offline fica neste navegador. Confirma que o estado diz "Sincronizado" e exporta cópias de segurança regularmente.</span>
@@ -96,11 +96,6 @@
   <div class="banner" id="installAppBanner" hidden>
     <span>Para usar isto como app, com ícone próprio e em ecrã inteiro: toca no ícone de Partilhar (quadrado com seta) e depois em "Adicionar ao Ecrã Principal".</span>
     <button id="dismissInstallBanner">Percebido</button>
-  </div>
-
-  <div class="banner" id="onboardBanner" hidden>
-    <span>Isto é um modelo de exemplo — substitui os clientes, tarefas, reuniões, projetos e despesas pelos teus quando quiseres.</span>
-    <button id="dismissBanner">Percebido</button>
   </div>
 
   <div class="filters" id="filters"></div>

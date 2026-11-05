@@ -241,7 +241,6 @@
     activeUserId = user.id;
     if (checkSessionAge()) return;
     try { localStorage.setItem(LAST_USER_KEY, JSON.stringify({ id: user.id, email: user.email || "" })); } catch(e){}
-    $("accountEmail").textContent = user.email || "";
     $("accountBox").hidden = false;
     hideScreen();
     startApp(user.id);
@@ -256,7 +255,6 @@
     if (!last || !last.id || navigator.onLine !== false) return false;
     activeUserId = last.id;
     if (checkSessionAge()) return false;
-    $("accountEmail").textContent = (last.email ? last.email + " · " : "") + "offline";
     $("accountBox").hidden = false;
     hideScreen();
     startApp(last.id);
