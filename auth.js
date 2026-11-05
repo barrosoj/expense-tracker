@@ -9,6 +9,10 @@
   var appStarted = false;
   var pendingEmail = "";
   var resendTimer = null;
+  var activeUserId = null;
+  var sessionTimer = null;
+  var MAX_SESSION_AGE_MS = 2 * 60 * 60 * 1000;
+  var EXPIRED_NOTICE_KEY = "qt_session_expired_notice";
 
   function $(id){ return document.getElementById(id); }
 
@@ -205,13 +209,43 @@
   // Last signed-in user on this device: { id, email }. Used to open the right local data offline.
   var LAST_USER_KEY = "qt_last_signed_in_user";
 
+  function sessionStartKey(userId){ return "qt_session_started_at:" + userId; }
+  function sessionStartedAt(userId){
+    var startedAt = 0;
+    try { startedAt = Number(localStorage.getItem(sessionStartKey(userId))) || 0; } catch(e){}
+    if (!startedAt){
+      startedAt = Date.now();
+      try { localStorage.setItem(sessionStartKey(userId), String(startedAt)); } catch(e){}
+    }
+    return startedAt;
+  }
+  function stopSessionTimer(){ clearTimeout(sessionTimer); sessionTimer = null; }
+  function expireSession(){
+    if (!activeUserId) return;
+    stopSessionTimer();
+    try { localStorage.setItem(EXPIRED_NOTICE_KEY, "1"); } catch(e){}
+    signOut("local");
+  }
+  function checkSessionAge(){
+    if (!activeUserId) return false;
+    var remaining = MAX_SESSION_AGE_MS - (Date.now() - sessionStartedAt(activeUserId));
+    if (remaining <= 0){ expireSession(); return true; }
+    stopSessionTimer();
+    sessionTimer = setTimeout(expireSession, remaining);
+    return false;
+  }
+
   function showSignedIn(session){
     var user = (session && session.user) || {};
+    if (!user.id) return;
+    activeUserId = user.id;
+    if (checkSessionAge()) return;
     try { localStorage.setItem(LAST_USER_KEY, JSON.stringify({ id: user.id, email: user.email || "" })); } catch(e){}
     $("accountEmail").textContent = user.email || "";
     $("accountBox").hidden = false;
     hideScreen();
     startApp(user.id);
+    if (window.QuadroSync) window.QuadroSync.start(user.id, client);
   }
 
   // Offline-first: if this device was signed in before and we're offline (token refresh
@@ -220,19 +254,33 @@
     var last = null;
     try { last = JSON.parse(localStorage.getItem(LAST_USER_KEY) || "null"); } catch(e){}
     if (!last || !last.id || navigator.onLine !== false) return false;
+    activeUserId = last.id;
+    if (checkSessionAge()) return false;
     $("accountEmail").textContent = (last.email ? last.email + " · " : "") + "offline";
     $("accountBox").hidden = false;
     hideScreen();
     startApp(last.id);
+    if (window.QuadroSync) window.QuadroSync.start(last.id, client);
     return true;
   }
 
   function showSignedOut(){
+    stopSessionTimer();
+    if (activeUserId){
+      try { localStorage.removeItem(sessionStartKey(activeUserId)); } catch(e){}
+    }
+    activeUserId = null;
     try { localStorage.removeItem(LAST_USER_KEY); } catch(e){}
     $("accountBox").hidden = true;
     pendingEmail = "";
     showScreen();
     showStep("email");
+    try {
+      if (localStorage.getItem(EXPIRED_NOTICE_KEY)){
+        localStorage.removeItem(EXPIRED_NOTICE_KEY);
+        setMessage("Por segurança, a sessão terminou após 2 horas. Volta a entrar.");
+      }
+    } catch(e){}
   }
 
   function cleanAuthParamsFromUrl(){
@@ -269,11 +317,18 @@
     $("signOutBtn").addEventListener("click", function(){
       if (window.confirm("Terminar sessão neste dispositivo?")) signOut("local");
     });
+    $("syncNowBtn").addEventListener("click", function(){
+      if (window.QuadroSync) window.QuadroSync.syncNow();
+    });
     $("signOutAllBtn").addEventListener("click", function(){
       if (window.confirm(
         "Terminar a sessão desta conta em TODOS os dispositivos (PC, telemóvel, tablet)?\n\n" +
         "Os outros dispositivos saem em até 1 hora. Os dados guardados neles não são apagados."
       )) signOut("global");
+    });
+    window.addEventListener("focus", checkSessionAge);
+    document.addEventListener("visibilitychange", function(){
+      if (!document.hidden) checkSessionAge();
     });
     renderProviders();
   }

@@ -44,6 +44,7 @@
   var dragTaskId = null;
   var currentMonth = null;
   var dayModalDate = null;
+  var applyingSyncedData = false;
 
   // ---------- utils ----------
   function el(tag, cls, html){
@@ -236,6 +237,9 @@
   function saveStore(){
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ clients:clients, tasks:tasks, meetings:meetings, projects:projects, expenses:expenses }));
+      if (!applyingSyncedData && window.QuadroSync && currentUserId){
+        window.QuadroSync.localChanged();
+      }
     } catch(e){
       var warn = document.getElementById("storageWarning");
       if (warn){
@@ -828,17 +832,19 @@
   // ---------- client ops ----------
   function addClient(name){
     var id = genId();
-    clients[id] = { name:name.trim(), color:nextPaletteColor(), order:Date.now() };
+    clients[id] = { name:name.trim(), color:nextPaletteColor(), order:Date.now(), updatedAt:Date.now() };
     saveStore(); renderClientsList(); render();
   }
   function renameClient(id, name){
     if (!clients[id] || !name.trim()) return;
     clients[id].name = name.trim();
+    clients[id].updatedAt = Date.now();
     saveStore(); render();
   }
   function recolorClient(id, color){
     if (!clients[id]) return;
     clients[id].color = color;
+    clients[id].updatedAt = Date.now();
     saveStore(); renderClientsList(); render();
   }
   function deleteClient(id){
@@ -1311,6 +1317,40 @@
   var started = false;
   // opts.userId: signed-in user's id (null/undefined = local-only mode, legacy key).
   window.QuadroApp = {
+    getSyncData: function(){
+      return JSON.parse(JSON.stringify({ clients:clients, tasks:tasks, meetings:meetings, projects:projects, expenses:expenses }));
+    },
+    applySyncData: function(data, baseline){
+      if (!data || typeof data !== "object") return;
+      var latest = this.getSyncData();
+      var concurrentChanges = false;
+      applyingSyncedData = true;
+      clients = data.clients || {};
+      tasks = data.tasks || {};
+      meetings = data.meetings || {};
+      projects = data.projects || {};
+      expenses = data.expenses || {};
+      if (baseline){
+        var target = { clients:clients, tasks:tasks, meetings:meetings, projects:projects, expenses:expenses };
+        ["clients","tasks","meetings","projects","expenses"].forEach(function(collection){
+          var ids = {};
+          Object.keys(baseline[collection] || {}).forEach(function(id){ ids[id] = true; });
+          Object.keys(latest[collection] || {}).forEach(function(id){ ids[id] = true; });
+          Object.keys(ids).forEach(function(id){
+            var before = baseline[collection] && baseline[collection][id];
+            var after = latest[collection] && latest[collection][id];
+            if (JSON.stringify(before) === JSON.stringify(after)) return;
+            concurrentChanges = true;
+            if (after) target[collection][id] = after;
+            else delete target[collection][id];
+          });
+        });
+      }
+      saveStore();
+      applyingSyncedData = false;
+      render();
+      return concurrentChanges;
+    },
     start: function(opts){
       if (started) return;
       started = true;

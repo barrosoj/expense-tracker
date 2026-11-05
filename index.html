@@ -63,7 +63,7 @@
   <header class="topbar">
     <div class="topbar-main">
       <h1>Quadro de Tarefas</h1>
-      <p class="subtitle">Versão offline — funciona sem ligação à internet, guardada neste navegador.</p>
+      <p class="subtitle">Funciona offline — guarda neste dispositivo e sincroniza com a nuvem quando estás online.</p>
     </div>
     <div class="topbar-actions">
       <button class="btn btn-ghost btn-sm" id="exportBtn">Exportar cópia</button>
@@ -74,6 +74,8 @@
     </div>
     <div class="account-box" id="accountBox" hidden>
       <span class="account-email" id="accountEmail"></span>
+      <span class="sync-status" id="syncStatus" role="status">A preparar sincronização…</span>
+      <button type="button" class="btn btn-ghost btn-sm" id="syncNowBtn">Sincronizar agora</button>
       <button type="button" class="btn btn-ghost btn-sm" id="signOutBtn">Terminar sessão</button>
       <button type="button" class="btn btn-danger btn-sm" id="signOutAllBtn" title="Termina a sessão desta conta em todos os dispositivos">Sair de todos</button>
     </div>
@@ -87,7 +89,7 @@
   </div>
 
   <div class="banner warn" id="storageWarning" hidden>
-    <span>Os dados desta página ficam guardados apenas neste navegador, neste computador. Usa "Exportar cópia" regularmente para não os perderes.</span>
+    <span>A cópia offline fica neste navegador. Confirma que o estado diz "Sincronizado" e exporta cópias de segurança regularmente.</span>
     <button id="dismissWarning">Percebido</button>
   </div>
 
@@ -372,6 +374,7 @@
 <script src="config.js"></script>
 <script src="vendor/supabase.js"></script>
 <script src="app.js"></script>
+<script src="sync.js"></script>
 <script src="auth.js"></script>
 </body>
 </html>
