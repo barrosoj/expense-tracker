@@ -67,17 +67,22 @@
       <p class="subtitle">Funciona offline — guarda neste dispositivo e sincroniza com a nuvem quando estás online.</p>
     </div>
     <div class="topbar-actions">
-      <button class="btn btn-ghost btn-sm" id="exportBtn">Exportar cópia</button>
-      <button class="btn btn-ghost btn-sm" id="importBtn">Importar cópia</button>
-      <input type="file" id="importFileInput" accept="application/json" hidden />
-      <button class="btn btn-ghost" id="manageClientsBtn">Gerir clientes</button>
       <button class="btn btn-primary" id="newItemBtn">+ Nova tarefa</button>
-    </div>
-    <div class="account-box" id="accountBox" hidden>
-      <span class="sync-status" id="syncStatus" role="status">A preparar sincronização…</span>
-      <button type="button" class="btn btn-ghost btn-sm" id="syncNowBtn">Sincronizar agora</button>
-      <button type="button" class="btn btn-ghost btn-sm" id="signOutBtn">Terminar sessão</button>
-      <button type="button" class="btn btn-danger btn-sm" id="signOutAllBtn" title="Termina a sessão desta conta em todos os dispositivos">Sair de todos</button>
+      <button class="btn btn-ghost" id="manageClientsBtn">Gerir clientes</button>
+      <details class="utility-menu" id="utilityMenu">
+        <summary class="btn btn-ghost utility-menu-toggle" aria-label="Abrir menu de opções">☰ Opções</summary>
+        <div class="utility-menu-panel">
+          <button type="button" class="btn btn-ghost btn-sm" id="exportBtn">Exportar cópia</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="importBtn">Importar cópia</button>
+          <input type="file" id="importFileInput" accept="application/json" hidden />
+          <div class="account-box" id="accountBox" hidden>
+            <span class="sync-status" id="syncStatus" role="status">A preparar sincronização…</span>
+            <button type="button" class="btn btn-ghost btn-sm" id="syncNowBtn">Sincronizar agora</button>
+            <button type="button" class="btn btn-ghost btn-sm" id="signOutBtn">Terminar sessão</button>
+            <button type="button" class="btn btn-danger btn-sm" id="signOutAllBtn" title="Termina a sessão desta conta em todos os dispositivos">Sair de todos</button>
+          </div>
+        </div>
+      </details>
     </div>
   </header>
 

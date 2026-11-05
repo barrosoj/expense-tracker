@@ -73,6 +73,16 @@ button, .btn, .chip, .view-tabs button, .segmented button, .swatch, .swatch-mini
 .topbar h1{ margin:0 0 2px; font-size:22px; font-weight:800; letter-spacing:-0.01em; }
 .subtitle{ margin:0; color:var(--text-muted); font-size:13.5px; }
 .topbar-actions{ display:flex; gap:8px; flex-wrap:wrap; }
+.utility-menu{ position:relative; }
+.utility-menu > summary{ list-style:none; cursor:pointer; }
+.utility-menu > summary::-webkit-details-marker{ display:none; }
+.utility-menu-panel{
+  position:absolute; top:calc(100% + 8px); right:0; z-index:60;
+  width:min(340px,calc(100vw - 32px)); padding:12px;
+  display:flex; flex-direction:column; gap:8px;
+  background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-m); box-shadow:var(--shadow);
+}
+.utility-menu-panel > .btn{ width:100%; text-align:left; }
 
 .view-tabs{
   display:inline-flex; border:1px solid var(--border); border-radius:999px; padding:3px;
@@ -294,15 +304,13 @@ table.expenses-table{ width:100%; min-width:600px; border-collapse:collapse; fon
     width:100%;
     gap:7px;
   }
-  .topbar-actions #newItemBtn{ grid-column:1 / -1; grid-row:1; }
-  .topbar-actions #exportBtn{ grid-column:1; grid-row:2; }
-  .topbar-actions #importBtn{ grid-column:2; grid-row:2; }
-  .topbar-actions #manageClientsBtn{ grid-column:1 / -1; grid-row:3; }
+  .topbar-actions #newItemBtn{ grid-column:1; grid-row:1; }
+  .topbar-actions #manageClientsBtn{ grid-column:1; grid-row:2; }
+  .topbar-actions .utility-menu{ grid-column:2; grid-row:1 / span 2; justify-self:end; }
+  .topbar-actions .utility-menu-toggle{ width:auto; min-width:112px; }
   .topbar-actions .btn{ width:100%; justify-content:center; }
-  .account-box{ justify-content:flex-start; flex-wrap:wrap; gap:6px; }
-  .account-email{ flex-basis:100%; }
-  .sync-status{ flex:1 1 100%; }
-  .account-box .btn{ flex:1 1 auto; }
+  .utility-menu-panel{ width:min(320px,calc(100vw - 24px)); }
+  .account-box{ align-items:stretch; justify-content:flex-start; flex-direction:column; gap:6px; }
   .banner{ align-items:flex-start; }
   .filters{ flex-wrap:nowrap; overflow-x:auto; padding-bottom:3px; scrollbar-width:thin; }
   .filters .chip{ flex:none; }
