@@ -189,9 +189,17 @@
   }
 
   // ---------- session ----------
-  function signOut(){
-    // "local" = sign out this device only (default "global" would sign the user out everywhere).
-    return client.auth.signOut({ scope: "local" }).catch(function(err){ console.error("signOut failed", err); });
+  // scope "local"  = this device only.
+  // scope "global" = revoke every session of this account (other devices are signed out
+  //                  when their current access token expires, at most ~1 hour).
+  function signOut(scope){
+    scope = scope === "global" ? "global" : "local";
+    return client.auth.signOut({ scope: scope }).then(function(res){
+      if (res && res.error) throw res.error;
+    }).catch(function(err){
+      console.error("signOut failed", err);
+      if (scope === "global") alert("Não foi possível terminar as sessões nos outros dispositivos. Verifica a ligação à internet e tenta novamente.");
+    });
   }
 
   // Last signed-in user on this device: { id, email }. Used to open the right local data offline.
@@ -259,7 +267,13 @@
     $("authResendBtn").addEventListener("click", function(){ if (pendingEmail) sendCode(pendingEmail); });
     $("authBackBtn").addEventListener("click", function(){ clearInterval(resendTimer); showStep("email"); });
     $("signOutBtn").addEventListener("click", function(){
-      if (window.confirm("Terminar sessão neste dispositivo?")) signOut();
+      if (window.confirm("Terminar sessão neste dispositivo?")) signOut("local");
+    });
+    $("signOutAllBtn").addEventListener("click", function(){
+      if (window.confirm(
+        "Terminar a sessão desta conta em TODOS os dispositivos (PC, telemóvel, tablet)?\n\n" +
+        "Os outros dispositivos saem em até 1 hora. Os dados guardados neles não são apagados."
+      )) signOut("global");
     });
     renderProviders();
   }
