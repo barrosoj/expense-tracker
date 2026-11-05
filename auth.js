@@ -266,9 +266,12 @@
 
   function showSignedOut(){
     stopSessionTimer();
-    if (activeUserId){
-      try { localStorage.removeItem(sessionStartKey(activeUserId)); } catch(e){}
-    }
+    var previousUserId = activeUserId;
+    try {
+      var previousUser = JSON.parse(localStorage.getItem(LAST_USER_KEY) || "null");
+      if (!previousUserId && previousUser) previousUserId = previousUser.id;
+    } catch(e){}
+    if (previousUserId){ try { localStorage.removeItem(sessionStartKey(previousUserId)); } catch(e){} }
     activeUserId = null;
     try { localStorage.removeItem(LAST_USER_KEY); } catch(e){}
     $("accountBox").hidden = true;
