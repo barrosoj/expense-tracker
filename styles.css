@@ -249,6 +249,44 @@ table.expenses-table{ width:100%; min-width:600px; border-collapse:collapse; fon
 .expenses-table tfoot td, .expenses-table tfoot th{ font-weight:800; border-top:2px solid var(--border); border-bottom:none; background:var(--surface-2); }
 .expenses-table-empty{ padding:24px 12px; text-align:center; color:var(--text-faint); font-size:12.5px; }
 
+.dashboard-view, .clients-view{ display:flex; flex-direction:column; gap:14px; }
+.dashboard-panel, .client-workspace{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-l); padding:16px; box-shadow:var(--shadow); }
+.dashboard-panel-heading, .client-workspace-header{ display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; }
+.dashboard-panel-heading h2{ margin:0 0 4px; font-size:16px; }
+.dashboard-panel-heading .hint{ margin:0; }
+.monthly-values{ display:grid; gap:8px; margin-top:14px; }
+.monthly-value-row{ display:grid; grid-template-columns:minmax(150px,1.3fr) repeat(2,minmax(120px,1fr)); align-items:center; gap:12px; border-top:1px solid var(--border); padding-top:9px; }
+.monthly-value-client{ font-size:13px; font-weight:750; }
+.monthly-value-field{ display:flex; align-items:center; gap:8px; color:var(--text-muted); font-size:11.5px; font-weight:700; }
+.monthly-value-field input{ width:100%; min-width:0; padding:8px; border:1px solid var(--border); border-radius:var(--radius-s); background:var(--surface); color:var(--text); text-align:right; font:inherit; font-size:13px; }
+.monthly-value-field input:focus{ outline:2px solid var(--accent); outline-offset:-1px; }
+.calendar-layout{ display:grid; grid-template-columns:minmax(0,1.3fr) minmax(220px,1fr); gap:18px; margin-top:14px; }
+.calendar-grid{ display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:4px; }
+.calendar-weekday{ color:var(--text-faint); font-size:10px; font-weight:800; text-align:center; text-transform:uppercase; padding:4px 0; }
+.calendar-day{ min-height:40px; display:flex; align-items:center; justify-content:center; gap:4px; border:1px solid transparent; border-radius:var(--radius-s); background:var(--surface-2); color:var(--text); font:inherit; cursor:pointer; }
+.calendar-day:hover, .calendar-day.selected{ border-color:var(--accent); background:var(--accent-soft); color:var(--accent-strong); }
+.calendar-day.today .calendar-day-number{ font-weight:850; text-decoration:underline; }
+.calendar-day-empty{ min-height:40px; }
+.calendar-day-count{ font-size:9px; font-weight:800; color:var(--accent-strong); }
+.calendar-agenda h3{ margin:2px 0 10px; font-size:13px; }
+.calendar-events{ display:flex; flex-direction:column; gap:6px; }
+.calendar-event{ display:flex; flex-direction:column; align-items:flex-start; gap:3px; width:100%; padding:9px 10px; border:1px solid var(--border); border-radius:var(--radius-s); background:var(--surface-2); color:var(--text); text-align:left; cursor:pointer; font:inherit; }
+.calendar-event:hover{ border-color:var(--accent); }
+.calendar-event-type{ color:var(--text-faint); font-size:10px; font-weight:800; text-transform:uppercase; }
+.calendar-event-title{ font-size:12px; font-weight:700; }
+.client-workspaces{ display:grid; gap:12px; }
+.client-workspace{ display:flex; flex-direction:column; gap:12px; }
+.client-workspace-header{ justify-content:flex-start; }
+.client-workspace-title{ display:flex; align-items:center; gap:8px; flex:1; min-width:140px; margin:0; font-size:15px; }
+.client-workspace-group{ display:grid; grid-template-columns:110px 1fr; align-items:start; gap:8px; border-top:1px solid var(--border); padding-top:9px; }
+.client-workspace-group h3{ margin:7px 0 0; color:var(--text-muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em; }
+.client-workspace-items{ display:grid; gap:5px; }
+.client-workspace-item{ display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; padding:8px 10px; border:0; border-radius:var(--radius-s); background:var(--surface-2); color:var(--text); text-align:left; cursor:pointer; font:inherit; }
+.client-workspace-item:hover{ background:var(--surface-3); }
+.client-workspace-item-title{ font-size:12.5px; font-weight:650; }
+.client-workspace-group .hint{ align-self:center; padding:8px; }
+.receipt-photo-info{ display:flex; flex-direction:column; gap:2px; color:var(--text-muted); font-size:11px; }
+
 .day-expenses-list{ display:flex; flex-direction:column; gap:6px; max-height:280px; overflow-y:auto; padding-right:2px; }
 .day-expense-item{ display:flex; align-items:center; gap:10px; background:var(--surface-2); border:1px solid var(--border); border-radius:var(--radius-s); padding:9px 10px; cursor:pointer; }
 .day-expense-item:hover{ background:var(--surface-3); }
@@ -305,6 +343,16 @@ table.expenses-table{ width:100%; min-width:600px; border-collapse:collapse; fon
 
 /* --- Ajustes para ecrã de iPhone/iPad --- */
 @media (max-width:480px){
+  .monthly-value-row{ grid-template-columns:1fr 1fr; gap:8px; }
+  .monthly-value-client{ grid-column:1 / -1; }
+  .calendar-layout{ grid-template-columns:1fr; }
+  .calendar-day{ min-height:36px; }
+  .client-workspace-group{ grid-template-columns:1fr; gap:4px; }
+  .client-workspace-group h3{ margin-top:2px; }
+  .client-workspace-header .btn{ flex:1; }
+  .receipt-scan{ align-items:flex-start; flex-wrap:wrap; }
+  .receipt-scan-status{ flex:1; min-width:140px; }
+  .receipt-photo-info{ flex-basis:100%; }
   .topbar h1{ font-size:19px; }
   .modal, .modal-lg{ max-width:100%; }
   .field-row{ flex-direction:column; gap:14px; }

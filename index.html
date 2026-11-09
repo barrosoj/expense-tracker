@@ -86,10 +86,12 @@
   </header>
 
   <nav class="view-tabs" id="viewTabs" aria-label="Secções principais">
-    <button type="button" data-view="tasks" class="active" aria-current="page">Tarefas</button>
+    <button type="button" data-view="home" class="active" aria-current="page">Início</button>
+    <button type="button" data-view="tasks">Tarefas</button>
     <button type="button" data-view="meetings">Reuniões</button>
     <button type="button" data-view="projects">Projetos</button>
     <button type="button" data-view="expenses">Despesas</button>
+    <button type="button" data-view="clients">Clientes</button>
   </nav>
 
   <div class="banner warn" id="storageWarning" hidden>
@@ -103,6 +105,35 @@
   </div>
 
   <div class="filters" id="filters"></div>
+
+  <main class="dashboard-view" id="dashboardView">
+    <section class="dashboard-panel">
+      <div class="dashboard-panel-heading">
+        <div>
+          <h2>Vendas e compras</h2>
+          <p class="hint">Valores do mês corrente — edita os montantes de cada cliente.</p>
+        </div>
+        <span class="month-nav-label mono" id="dashboardMonthLabel"></span>
+      </div>
+      <div class="monthly-values" id="monthlyValues"></div>
+    </section>
+    <section class="dashboard-panel">
+      <div class="dashboard-panel-heading">
+        <div>
+          <h2>Calendário</h2>
+          <p class="hint">Prazos de tarefas e reuniões.</p>
+        </div>
+        <span class="month-nav-label mono" id="calendarMonthLabel"></span>
+      </div>
+      <div class="calendar-layout">
+        <div class="calendar-grid" id="calendarGrid"></div>
+        <div class="calendar-agenda">
+          <h3 id="calendarSelectedLabel"></h3>
+          <div class="calendar-events" id="calendarEvents"></div>
+        </div>
+      </div>
+    </section>
+  </main>
 
   <main class="board" id="board"></main>
 
@@ -131,6 +162,10 @@
     </div>
     <button type="button" class="btn btn-ghost btn-block" id="addExpenseBottomBtn">+ Nova despesa</button>
   </div>
+
+  <section class="clients-view" id="clientsView" hidden>
+    <div class="client-workspaces" id="clientWorkspaces"></div>
+  </section>
 </div>
 
 <div class="modal-overlay" id="taskModalOverlay" hidden>
@@ -308,6 +343,7 @@
       <button type="button" class="btn btn-ghost btn-sm" id="scanReceiptBtn">Fotografar recibo</button>
       <input type="file" id="receiptFileInput" accept="image/*" capture="environment" hidden />
       <span class="receipt-scan-status" id="receiptScanStatus" role="status" aria-live="polite">A foto sugere os campos; confirma ou edita antes de guardar.</span>
+      <div class="receipt-photo-info" id="receiptPhotoInfo"></div>
     </div>
 
     <div class="field">
