@@ -3,7 +3,7 @@
 (function(){
   "use strict";
 
-  var COLLECTIONS = ["clients", "tasks", "meetings", "projects", "expenses"];
+  var COLLECTIONS = ["clients", "tasks", "meetings", "projects", "expenses", "monthlyValues"];
   var userId = null;
   var client = null;
   var running = false;
@@ -27,7 +27,7 @@
       : "Ainda não sincronizado";
   }
   function clone(value){ return JSON.parse(JSON.stringify(value)); }
-  function blankData(){ return { clients:{}, tasks:{}, meetings:{}, projects:{}, expenses:{} }; }
+  function blankData(){ return { clients:{}, tasks:{}, meetings:{}, projects:{}, expenses:{}, monthlyValues:{} }; }
   function getLocal(){
     var data = window.QuadroApp.getSyncData();
     COLLECTIONS.forEach(function(collection){

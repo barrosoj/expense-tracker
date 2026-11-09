@@ -15,7 +15,7 @@
 -- ───────────────────────────── records ─────────────────────────────
 create table if not exists public.records (
   user_id           uuid        not null default auth.uid() references auth.users (id) on delete cascade,
-  collection        text        not null check (collection in ('clients','tasks','meetings','projects','expenses')),
+  collection        text        not null check (collection in ('clients','tasks','meetings','projects','expenses','monthlyValues')),
   id                text        not null check (char_length(id) between 1 and 64),
   data              jsonb       not null default '{}'::jsonb,
   updated_at        bigint      not null,                -- client clock, ms since epoch
@@ -23,6 +23,11 @@ create table if not exists public.records (
   server_updated_at timestamptz not null default now(),
   primary key (user_id, collection, id)
 );
+
+alter table public.records drop constraint if exists records_collection_check;
+alter table public.records
+  add constraint records_collection_check
+  check (collection in ('clients','tasks','meetings','projects','expenses','monthlyValues'));
 
 create index if not exists records_user_server_updated_idx
   on public.records (user_id, server_updated_at);

@@ -6,11 +6,12 @@ Uma aplicação simples para acompanhar despesas e organizar tarefas, reuniões 
 
 ## Funcionalidades
 
+- **Início:** mostra os valores mensais de vendas e compras da Kennametal, Bass, Arno e GAIt e um calendário de tarefas e reuniões. Os valores do mês podem ser editados diretamente.
 - **Despesas:** regista data, valor, categoria, fornecedor, descrição e cliente. Consulta totais por categoria e por dia, mês a mês, e exporta as despesas mensais em CSV.
 - **Tarefas:** organiza tarefas por estado, prioridade, cliente e prazo.
 - **Reuniões:** guarda preparação, notas, resumo e ações a acompanhar.
 - **Projetos:** acompanha estado, descrição e documentos anexados.
-- **Clientes:** cria clientes e associa-os a tarefas, reuniões, projetos e despesas.
+- **Clientes:** cria clientes, associa-os a tarefas, reuniões, projetos e despesas, e consulta tarefas, reuniões e projetos agrupados por cliente.
 - **Sincronização entre dispositivos:** inicia sessão com Google para guardar os dados na nuvem e aceder aos mesmos dados noutro dispositivo. As alterações sincronizam quando há ligação; também podes usar **Sincronizar agora**.
 - **Modo offline:** as alterações ficam guardadas no dispositivo e sincronizam quando a ligação regressar.
 - **Cópias de segurança:** usa **Exportar cópia** e **Importar cópia** para guardar ou transferir os dados manualmente.
@@ -24,5 +25,6 @@ Abre o endereço acima no navegador e inicia sessão com a tua conta Google. Par
 ## Notas importantes
 
 - Os documentos anexados a projetos ficam guardados apenas no dispositivo onde foram adicionados; não são sincronizados nem incluídos nas cópias de segurança.
+- As fotos dos recibos ficam guardadas neste dispositivo, organizadas por mês (`receipts/AAAA-MM`), e não são sincronizadas nem incluídas nas cópias de segurança.
 - A aplicação necessita de internet para iniciar sessão e sincronizar. Sem ligação, podes continuar a usar os dados locais que já estão nesse dispositivo.
 - A sessão de duas horas é controlada pela aplicação neste dispositivo. A aplicação não substitui aconselhamento contabilístico ou fiscal.

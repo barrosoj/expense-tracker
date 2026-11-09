@@ -24,14 +24,16 @@
   var PROJECT_STATUS_ORDER = { ativo:0, pausado:1, concluido:2 };
   var EXPENSE_CATEGORIES = ["deslocacoes","refeicoes","alojamento","material"];
   var EXPENSE_CATEGORY_LABEL = { deslocacoes:"Deslocações", refeicoes:"Refeições", alojamento:"Alojamento", material:"Material" };
+  var DASHBOARD_CLIENTS = ["Kennametal","Bass","Arno","GAIt"];
 
-  var currentView = "tasks"; // "tasks" | "meetings" | "projects" | "expenses"
+  var currentView = "home"; // "home" | "tasks" | "meetings" | "projects" | "expenses" | "clients"
 
   var clients = {};
   var tasks = {};
   var meetings = {};
   var projects = {};
   var expenses = {};
+  var monthlyValues = {};
   var activeClientFilter = null;
 
   var editingTaskId = null;
@@ -44,13 +46,15 @@
   var dragTaskId = null;
   var currentMonth = null;
   var dayModalDate = null;
+  var calendarSelectedDate = todayStr();
+  var receiptPhotoDraft = null;
   var applyingSyncedData = false;
 
   // ---------- utils ----------
-  function el(tag, cls, html){
+  function el(tag, cls, text){
     var e = document.createElement(tag);
     if (cls) e.className = cls;
-    if (html !== undefined) e.innerHTML = html;
+    if (text !== undefined) e.textContent = text;
     return e;
   }
   function escapeHtml(s){
@@ -107,7 +111,7 @@
     return isNaN(n) ? 0 : n;
   }
 
-  // ---------- IndexedDB (document blobs) ----------
+  // ---------- IndexedDB (document and receipt photo blobs) ----------
   var idbPromise = null;
   function idbOpen(){
     if (idbPromise) return idbPromise;
@@ -161,7 +165,8 @@
       tasks: {},
       meetings: {},
       projects: {},
-      expenses: {}
+      expenses: {},
+      monthlyValues: {}
     };
   }
 
@@ -197,6 +202,7 @@
         meetings = parsed.meetings || {};
         projects = parsed.projects || {};
         expenses = parsed.expenses || {};
+        monthlyValues = parsed.monthlyValues || {};
         return;
       } catch(e){ /* fall through to seed */ }
     }
@@ -206,12 +212,13 @@
     meetings = seed.meetings;
     projects = seed.projects;
     expenses = seed.expenses;
+    monthlyValues = seed.monthlyValues;
     saveStore();
   }
 
   function saveStore(){
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ clients:clients, tasks:tasks, meetings:meetings, projects:projects, expenses:expenses }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ clients:clients, tasks:tasks, meetings:meetings, projects:projects, expenses:expenses, monthlyValues:monthlyValues }));
       if (!applyingSyncedData && window.QuadroSync && currentUserId){
         window.QuadroSync.localChanged();
       }
@@ -234,19 +241,25 @@
 
   function render(){
     renderFilters();
+    document.getElementById("dashboardView").hidden = currentView !== "home";
     document.getElementById("board").hidden = currentView !== "tasks";
     document.getElementById("meetingsView").hidden = currentView !== "meetings";
     document.getElementById("projectsView").hidden = currentView !== "projects";
     document.getElementById("expensesView").hidden = currentView !== "expenses";
-    if (currentView === "tasks") renderBoard();
+    document.getElementById("clientsView").hidden = currentView !== "clients";
+    if (currentView === "home") renderDashboard();
+    else if (currentView === "tasks") renderBoard();
     else if (currentView === "meetings") renderMeetingsList();
     else if (currentView === "projects") renderProjectsList();
-    else renderExpensesList();
+    else if (currentView === "expenses") renderExpensesList();
+    else renderClientsView();
   }
 
   function renderFilters(){
     var wrap = document.getElementById("filters");
     wrap.innerHTML = "";
+    wrap.hidden = currentView === "home" || currentView === "clients";
+    if (wrap.hidden) return;
     var map = currentMap();
 
     var clientIds = Object.keys(clients).sort(function(a,b){ return (clients[a].order||0) - (clients[b].order||0); });
@@ -280,6 +293,156 @@
     var map = currentMap();
     return Object.keys(map).filter(function(id){
       return activeClientFilter === null || map[id].clientId === activeClientFilter;
+    });
+  }
+
+  function dashboardValueKey(month, clientName){
+    return month + "|" + clientName.toLowerCase();
+  }
+  function renderDashboard(){
+    var month = todayStr().slice(0,7);
+    document.getElementById("dashboardMonthLabel").textContent = monthLabel(month);
+    var values = document.getElementById("monthlyValues");
+    values.innerHTML = "";
+    DASHBOARD_CLIENTS.forEach(function(name){
+      var key = dashboardValueKey(month, name);
+      var saved = monthlyValues[key] || { sales:0, purchases:0 };
+      var row = el("div", "monthly-value-row");
+      row.appendChild(el("div", "monthly-value-client", name));
+      [["sales","Vendas"],["purchases","Compras"]].forEach(function(field){
+        var cell = el("label", "monthly-value-field");
+        cell.appendChild(el("span", "", field[1]));
+        var input = el("input", "mono");
+        input.type = "text";
+        input.inputMode = "decimal";
+        input.setAttribute("aria-label", field[1] + " — " + name);
+        input.value = (Number(saved[field[0]]) || 0).toFixed(2).replace(".", ",");
+        input.addEventListener("change", function(){
+          var current = monthlyValues[key] || { sales:0, purchases:0 };
+          current[field[0]] = Math.max(0, parseAmountInput(input.value));
+          current.updatedAt = Date.now();
+          monthlyValues[key] = current;
+          input.value = current[field[0]].toFixed(2).replace(".", ",");
+          saveStore();
+        });
+        cell.appendChild(input);
+        row.appendChild(cell);
+      });
+      values.appendChild(row);
+    });
+    renderCalendar(month);
+  }
+
+  function calendarItemsForDate(date){
+    var items = [];
+    Object.keys(tasks).forEach(function(id){
+      var task = tasks[id];
+      if (task.due === date && task.status !== "done") items.push({ type:"task", id:id, title:task.title });
+    });
+    Object.keys(meetings).forEach(function(id){
+      var meeting = meetings[id];
+      if (meeting.date === date) items.push({ type:"meeting", id:id, title:meeting.title });
+    });
+    return items;
+  }
+
+  function renderCalendar(month){
+    var parts = month.split("-").map(Number);
+    var year = parts[0], monthIndex = parts[1] - 1;
+    document.getElementById("calendarMonthLabel").textContent = monthLabel(month);
+    var firstDay = new Date(year, monthIndex, 1);
+    var startOffset = (firstDay.getDay() + 6) % 7;
+    var daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+    var selected = calendarSelectedDate.slice(0,7) === month ? calendarSelectedDate : month + "-01";
+    calendarSelectedDate = selected;
+    var grid = document.getElementById("calendarGrid");
+    grid.innerHTML = "";
+    ["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"].forEach(function(label){
+      grid.appendChild(el("div", "calendar-weekday", label));
+    });
+    for (var blank = 0; blank < startOffset; blank++) grid.appendChild(el("div", "calendar-day calendar-day-empty"));
+    for (var day = 1; day <= daysInMonth; day++){
+      var date = year + "-" + String(monthIndex+1).padStart(2,"0") + "-" + String(day).padStart(2,"0");
+      var items = calendarItemsForDate(date);
+      var button = el("button", "calendar-day" + (date === calendarSelectedDate ? " selected" : "") + (date === todayStr() ? " today" : ""));
+      button.type = "button";
+      button.setAttribute("aria-label", formatDateShort(date) + (items.length ? ", " + items.length + " eventos" : ""));
+      button.appendChild(el("span", "calendar-day-number", String(day)));
+      if (items.length) button.appendChild(el("span", "calendar-day-count mono", String(items.length)));
+      button.addEventListener("click", function(selectedDate){
+        return function(){ calendarSelectedDate = selectedDate; renderCalendar(month); };
+      }(date));
+      grid.appendChild(button);
+    }
+
+    document.getElementById("calendarSelectedLabel").textContent = formatDateShort(selected);
+    var eventList = document.getElementById("calendarEvents");
+    eventList.innerHTML = "";
+    var selectedItems = calendarItemsForDate(selected);
+    if (!selectedItems.length){
+      eventList.appendChild(el("div", "empty-hint", "Sem tarefas ou reuniões neste dia."));
+      return;
+    }
+    selectedItems.forEach(function(item){
+      var button = el("button", "calendar-event");
+      button.type = "button";
+      button.appendChild(el("span", "calendar-event-type", item.type === "task" ? "Tarefa" : "Reunião"));
+      button.appendChild(el("span", "calendar-event-title", item.title || ""));
+      button.addEventListener("click", function(){
+        if (item.type === "task") openTaskModal(item.id);
+        else openMeetingModal(item.id);
+      });
+      eventList.appendChild(button);
+    });
+  }
+
+  function renderClientsView(){
+    var wrap = document.getElementById("clientWorkspaces");
+    wrap.innerHTML = "";
+    var ids = Object.keys(clients).sort(function(a,b){ return (clients[a].order||0) - (clients[b].order||0); });
+    if (!ids.length){
+      wrap.appendChild(el("div", "empty-hint", "Ainda não tens clientes. Usa «Gerir clientes» para adicionar o primeiro."));
+      return;
+    }
+    ids.forEach(function(clientId){
+      var workspace = el("section", "client-workspace");
+      var header = el("div", "client-workspace-header");
+      var title = el("h2", "client-workspace-title");
+      var dot = el("span", "client-dot");
+      dot.style.background = clients[clientId].color;
+      title.appendChild(dot);
+      title.appendChild(document.createTextNode(clients[clientId].name));
+      header.appendChild(title);
+      [["Tarefa",openTaskModal],["Reunião",openMeetingModal],["Projeto",openProjectModal]].forEach(function(action){
+        var button = el("button", "btn btn-ghost btn-sm", "+ " + action[0]);
+        button.type = "button";
+        button.addEventListener("click", function(){ activeClientFilter = clientId; action[1](null); });
+        header.appendChild(button);
+      });
+      workspace.appendChild(header);
+      [["Tarefas",tasks,"title","due",openTaskModal],["Reuniões",meetings,"title","date",openMeetingModal],["Projetos",projects,"name","",openProjectModal]].forEach(function(group){
+        var section = el("div", "client-workspace-group");
+        section.appendChild(el("h3", "", group[0]));
+        var list = el("div", "client-workspace-items");
+        var records = Object.keys(group[1]).filter(function(id){ return group[1][id].clientId === clientId; });
+        records.sort(function(a,b){
+          var da = group[1][a][group[3]] || "", db = group[1][b][group[3]] || "";
+          return da.localeCompare(db);
+        });
+        if (!records.length) list.appendChild(el("div", "hint", "Sem registos."));
+        records.forEach(function(id){
+          var record = group[1][id];
+          var item = el("button", "client-workspace-item");
+          item.type = "button";
+          item.appendChild(el("span", "client-workspace-item-title", record[group[2]] || ""));
+          if (group[3] && record[group[3]]) item.appendChild(el("span", "hint", formatDateShort(record[group[3]])));
+          item.addEventListener("click", function(){ group[4](id); });
+          list.appendChild(item);
+        });
+        section.appendChild(list);
+        workspace.appendChild(section);
+      });
+      wrap.appendChild(workspace);
     });
   }
 
@@ -354,12 +517,12 @@
     var top = el("div", "card-top");
     if (color){ var dot = el("span", "client-dot"); dot.style.background = color; top.appendChild(dot); }
     var cname = clientName(t.clientId);
-    top.appendChild(el("span", "client-name" + (cname ? "" : " none"), escapeHtml(cname || "Sem cliente")));
+    top.appendChild(el("span", "client-name" + (cname ? "" : " none"), cname || "Sem cliente"));
     top.appendChild(el("span", "priority-badge priority-" + t.priority, PRIORITY_LABEL[t.priority] || "Média"));
     card.appendChild(top);
 
-    card.appendChild(el("div", "card-title", escapeHtml(t.title)));
-    if (t.notes) card.appendChild(el("div", "card-notes", escapeHtml(t.notes)));
+    card.appendChild(el("div", "card-title", t.title));
+    if (t.notes) card.appendChild(el("div", "card-notes", t.notes));
 
     var meta = el("div", "card-meta");
     var dueInfo = formatDue(t.due);
@@ -403,7 +566,7 @@
     var row = el("div", "meeting-row");
     row.appendChild(el("div", "meeting-row-date mono", formatDateShort(m.date)));
     var main = el("div", "meeting-row-main");
-    main.appendChild(el("div", "meeting-row-title", escapeHtml(m.title)));
+    main.appendChild(el("div", "meeting-row-title", m.title));
     var sub = el("div", "meeting-row-sub");
     var color = clientColor(m.clientId);
     if (color){ var dot = el("span", "client-dot"); dot.style.background = color; sub.appendChild(dot); }
@@ -436,7 +599,7 @@
     var p = projects[id];
     var row = el("div", "project-row");
     var main = el("div", "project-row-main");
-    main.appendChild(el("div", "project-row-title", escapeHtml(p.name)));
+    main.appendChild(el("div", "project-row-title", p.name));
     var sub = el("div", "project-row-sub");
     var color = clientColor(p.clientId);
     if (color){ var dot = el("span", "client-dot"); dot.style.background = color; sub.appendChild(dot); }
@@ -673,7 +836,7 @@
       cb.type = "checkbox"; cb.checked = !!item.done;
       cb.addEventListener("change", function(){ item.done = cb.checked; renderActionsDraft(); });
       row.appendChild(cb);
-      row.appendChild(el("span", "action-text" + (item.done ? " done" : ""), escapeHtml(item.text)));
+      row.appendChild(el("span", "action-text" + (item.done ? " done" : ""), item.text));
       var rm = el("button", "icon-btn", "×");
       rm.type = "button"; rm.title = "Remover";
       rm.addEventListener("click", function(){
@@ -722,10 +885,10 @@
     documentsDraft.forEach(function(doc){
       var row = el("div", "document-item");
       var ext = (doc.name.split(".").pop() || "?").slice(0,4).toUpperCase();
-      row.appendChild(el("div", "document-icon", escapeHtml(ext)));
+      row.appendChild(el("div", "document-icon", ext));
 
       var info = el("div", "document-info");
-      var nameBtn = el("button", "document-name", escapeHtml(doc.name));
+      var nameBtn = el("button", "document-name", doc.name);
       nameBtn.type = "button";
       nameBtn.addEventListener("click", function(){ openDocumentBlob(doc.id, doc.name); });
       info.appendChild(nameBtn);
@@ -789,22 +952,52 @@
     var amount = parseAmountInput(document.getElementById("expenseAmount").value);
     var description = document.getElementById("expenseDescription").value.trim();
     if (amount <= 0){ document.getElementById("expenseAmount").focus(); return; }
+    var date = document.getElementById("expenseDate").value || todayStr();
+    var id = editingExpenseId || genId();
+    var oldPhotoId = editingExpenseId && expenses[editingExpenseId] ? expenses[editingExpenseId].receiptPhotoId : null;
+    var photoId = receiptPhotoDraft ? (oldPhotoId || "receipt_" + id) : oldPhotoId;
     var payload = {
-      date: document.getElementById("expenseDate").value || todayStr(),
+      date: date,
       category: document.getElementById("expenseCategorySeg").dataset.value,
       clientId: document.getElementById("expenseClient").value || null,
       supplier: document.getElementById("expenseSupplier").value.trim(),
       description: description,
       amount: amount,
+      receiptPhotoId: photoId || null,
       updatedAt: Date.now()
     };
-    if (editingExpenseId){ expenses[editingExpenseId] = Object.assign({}, expenses[editingExpenseId], payload); }
-    else { payload.createdAt = Date.now(); expenses[genId()] = payload; }
-    saveStore(); closeExpenseModal(); render();
+    var persistPhoto = Promise.resolve();
+    if (receiptPhotoDraft){
+      persistPhoto = idbPut({
+        id:photoId,
+        name:receiptPhotoDraft.name,
+        contentType:receiptPhotoDraft.type,
+        sizeBytes:receiptPhotoDraft.size,
+        folder:"receipts/" + date.slice(0,7),
+        blob:receiptPhotoDraft
+      });
+    } else if (photoId && editingExpenseId && expenses[editingExpenseId].date !== date){
+      persistPhoto = idbGet(photoId).then(function(photo){
+        if (!photo) return;
+        photo.folder = "receipts/" + date.slice(0,7);
+        return idbPut(photo);
+      });
+    }
+    persistPhoto.then(function(){
+      if (editingExpenseId){ expenses[editingExpenseId] = Object.assign({}, expenses[editingExpenseId], payload); }
+      else { payload.createdAt = Date.now(); expenses[id] = payload; }
+      receiptPhotoDraft = null;
+      saveStore(); closeExpenseModal(); render();
+    }).catch(function(err){
+      console.error("save receipt photo failed", err);
+      setReceiptScanStatus("Não foi possível guardar a foto neste dispositivo. Liberta espaço ou tenta outra imagem.", true);
+    });
   }
   function deleteEditingExpense(){
     if (!editingExpenseId) return;
+    var photoId = expenses[editingExpenseId].receiptPhotoId;
     delete expenses[editingExpenseId];
+    if (photoId) idbDelete(photoId).catch(function(err){ console.error("delete receipt photo failed", err); });
     saveStore(); closeExpenseModal(); render();
   }
 
@@ -839,7 +1032,7 @@
     var noneOpt = el("option", "", "Sem cliente"); noneOpt.value = "";
     sel.appendChild(noneOpt);
     Object.keys(clients).sort(function(a,b){ return (clients[a].order||0) - (clients[b].order||0); }).forEach(function(cid){
-      var opt = el("option", "", escapeHtml(clients[cid].name));
+      var opt = el("option", "", clients[cid].name);
       opt.value = cid;
       sel.appendChild(opt);
     });
@@ -975,7 +1168,41 @@
     status.textContent = message;
     status.classList.toggle("error", !!isError);
   }
+  function renderReceiptPhoto(expense){
+    var info = document.getElementById("receiptPhotoInfo");
+    info.innerHTML = "";
+    if (receiptPhotoDraft){
+      info.textContent = receiptPhotoDraft.name + " — será guardada em receipts/" + (document.getElementById("expenseDate").value || todayStr()).slice(0,7);
+      return;
+    }
+    var photoId = expense && expense.receiptPhotoId;
+    if (!photoId) return;
+    idbGet(photoId).then(function(photo){
+      if (document.getElementById("expenseModalOverlay").hidden) return;
+      var currentExpense = editingExpenseId && expenses[editingExpenseId];
+      if (!currentExpense || currentExpense.receiptPhotoId !== photoId) return;
+      if (!photo){ info.textContent = "Foto não disponível neste dispositivo."; return; }
+      var button = el("button", "document-name", photo.name || "Ver foto do recibo");
+      button.type = "button";
+      button.addEventListener("click", function(){ openReceiptPhoto(photoId, photo.name); });
+      info.appendChild(button);
+      info.appendChild(el("span", "document-meta mono", photo.folder || ""));
+    }).catch(function(){ info.textContent = "Foto não disponível neste dispositivo."; });
+  }
+  function openReceiptPhoto(id, name){
+    idbGet(id).then(function(photo){
+      if (!photo || !photo.blob){ alert("Não foi possível encontrar esta foto neste dispositivo."); return; }
+      var url = URL.createObjectURL(photo.blob);
+      window.open(url, "_blank");
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+    }).catch(function(err){
+      console.error("openReceiptPhoto failed", err);
+      alert("Não foi possível abrir \"" + name + "\".");
+    });
+  }
   function scanReceipt(file){
+    receiptPhotoDraft = file;
+    renderReceiptPhoto(null);
     var button = document.getElementById("scanReceiptBtn");
     button.disabled = true;
     setReceiptScanStatus("A preparar a leitura do recibo…", false);
@@ -1013,6 +1240,7 @@
 
   function openExpenseModal(id, presetDate){
     editingExpenseId = id || null;
+    receiptPhotoDraft = null;
     var overlay = document.getElementById("expenseModalOverlay");
     var title = document.getElementById("expenseModalTitle");
     var deleteBtn = document.getElementById("deleteExpenseBtn");
@@ -1037,6 +1265,7 @@
       document.getElementById("expenseDescription").value = "";
       deleteBtn.hidden = true;
     }
+    renderReceiptPhoto(id && expenses[id] ? expenses[id] : null);
     setReceiptScanStatus("A foto sugere os campos; confirma ou edita antes de guardar.", false);
     overlay.hidden = false;
     setTimeout(function(){ document.getElementById("expenseAmount").focus(); }, 0);
@@ -1044,6 +1273,7 @@
   function closeExpenseModal(){
     document.getElementById("expenseModalOverlay").hidden = true;
     editingExpenseId = null;
+    receiptPhotoDraft = null;
   }
 
   function resetConfirm(btn, label){
@@ -1097,7 +1327,7 @@
 
   // ---------- export / import (backup) ----------
   function exportData(){
-    var payload = { clients:clients, tasks:tasks, meetings:meetings, projects:projects, expenses:expenses, exportedAt:new Date().toISOString() };
+    var payload = { clients:clients, tasks:tasks, meetings:meetings, projects:projects, expenses:expenses, monthlyValues:monthlyValues, exportedAt:new Date().toISOString() };
     var blob = new Blob([JSON.stringify(payload, null, 2)], { type:"application/json" });
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
@@ -1124,11 +1354,12 @@
       var nMeetings = Object.keys(parsed.meetings||{}).length;
       var nProjects = Object.keys(parsed.projects||{}).length;
       var nExpenses = Object.keys(parsed.expenses||{}).length;
+      var nMonthlyValues = Object.keys(parsed.monthlyValues||{}).length;
       var ok = window.confirm(
         "Importar " + nClients + " cliente(s), " + nTasks + " tarefa(s), " + nMeetings + " reunião(ões), " +
-        nProjects + " projeto(s) e " + nExpenses + " despesa(s)?\n" +
+        nProjects + " projeto(s), " + nExpenses + " despesa(s) e " + nMonthlyValues + " valor(es) mensais?\n" +
         "Isto substitui todos os dados atuais deste navegador.\n" +
-        "Nota: os documentos anexados aos projetos não fazem parte desta cópia e têm de ser voltados a anexar."
+        "Nota: as fotos e documentos guardados neste dispositivo não fazem parte desta cópia e têm de ser voltados a anexar."
       );
       if (!ok) return;
       clients = parsed.clients || {};
@@ -1136,6 +1367,7 @@
       meetings = parsed.meetings || {};
       projects = parsed.projects || {};
       expenses = parsed.expenses || {};
+      monthlyValues = parsed.monthlyValues || {};
       saveStore();
       render();
     };
@@ -1150,7 +1382,7 @@
       if (btn.dataset.view === view) btn.setAttribute("aria-current", "page");
       else btn.removeAttribute("aria-current");
     });
-    var labels = { tasks:"+ Nova tarefa", meetings:"+ Nova reunião", projects:"+ Novo projeto", expenses:"+ Nova despesa" };
+    var labels = { home:"+ Nova tarefa", tasks:"+ Nova tarefa", meetings:"+ Nova reunião", projects:"+ Novo projeto", expenses:"+ Nova despesa", clients:"+ Nova tarefa" };
     document.getElementById("newItemBtn").textContent = labels[view] || "+ Novo";
     render();
   }
@@ -1162,7 +1394,7 @@
     });
 
     document.getElementById("newItemBtn").addEventListener("click", function(){
-      if (currentView === "tasks") openTaskModal(null);
+      if (currentView === "home" || currentView === "tasks" || currentView === "clients") openTaskModal(null);
       else if (currentView === "meetings") openMeetingModal(null);
       else if (currentView === "projects") openProjectModal(null);
       else openExpenseModal(null);
@@ -1339,7 +1571,7 @@
   // opts.userId: signed-in user's id (null/undefined = local-only mode, legacy key).
   window.QuadroApp = {
     getSyncData: function(){
-      return JSON.parse(JSON.stringify({ clients:clients, tasks:tasks, meetings:meetings, projects:projects, expenses:expenses }));
+      return JSON.parse(JSON.stringify({ clients:clients, tasks:tasks, meetings:meetings, projects:projects, expenses:expenses, monthlyValues:monthlyValues }));
     },
     applySyncData: function(data, baseline){
       if (!data || typeof data !== "object") return;
@@ -1351,9 +1583,10 @@
       meetings = data.meetings || {};
       projects = data.projects || {};
       expenses = data.expenses || {};
+      monthlyValues = data.monthlyValues || {};
       if (baseline){
-        var target = { clients:clients, tasks:tasks, meetings:meetings, projects:projects, expenses:expenses };
-        ["clients","tasks","meetings","projects","expenses"].forEach(function(collection){
+        var target = { clients:clients, tasks:tasks, meetings:meetings, projects:projects, expenses:expenses, monthlyValues:monthlyValues };
+        ["clients","tasks","meetings","projects","expenses","monthlyValues"].forEach(function(collection){
           var ids = {};
           Object.keys(baseline[collection] || {}).forEach(function(id){ ids[id] = true; });
           Object.keys(latest[collection] || {}).forEach(function(id){ ids[id] = true; });
