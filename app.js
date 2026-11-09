@@ -51,10 +51,10 @@
   var applyingSyncedData = false;
 
   // ---------- utils ----------
-  function el(tag, cls, html){
+  function el(tag, cls, text){
     var e = document.createElement(tag);
     if (cls) e.className = cls;
-    if (html !== undefined) e.innerHTML = html;
+    if (text !== undefined) e.textContent = text;
     return e;
   }
   function escapeHtml(s){
@@ -387,7 +387,7 @@
       var button = el("button", "calendar-event");
       button.type = "button";
       button.appendChild(el("span", "calendar-event-type", item.type === "task" ? "Tarefa" : "Reunião"));
-      button.appendChild(el("span", "calendar-event-title", escapeHtml(item.title || "")));
+      button.appendChild(el("span", "calendar-event-title", item.title || ""));
       button.addEventListener("click", function(){
         if (item.type === "task") openTaskModal(item.id);
         else openMeetingModal(item.id);
@@ -434,7 +434,7 @@
           var record = group[1][id];
           var item = el("button", "client-workspace-item");
           item.type = "button";
-          item.appendChild(el("span", "client-workspace-item-title", escapeHtml(record[group[2]] || "")));
+          item.appendChild(el("span", "client-workspace-item-title", record[group[2]] || ""));
           if (group[3] && record[group[3]]) item.appendChild(el("span", "hint", formatDateShort(record[group[3]])));
           item.addEventListener("click", function(){ group[4](id); });
           list.appendChild(item);
@@ -517,12 +517,12 @@
     var top = el("div", "card-top");
     if (color){ var dot = el("span", "client-dot"); dot.style.background = color; top.appendChild(dot); }
     var cname = clientName(t.clientId);
-    top.appendChild(el("span", "client-name" + (cname ? "" : " none"), escapeHtml(cname || "Sem cliente")));
+    top.appendChild(el("span", "client-name" + (cname ? "" : " none"), cname || "Sem cliente"));
     top.appendChild(el("span", "priority-badge priority-" + t.priority, PRIORITY_LABEL[t.priority] || "Média"));
     card.appendChild(top);
 
-    card.appendChild(el("div", "card-title", escapeHtml(t.title)));
-    if (t.notes) card.appendChild(el("div", "card-notes", escapeHtml(t.notes)));
+    card.appendChild(el("div", "card-title", t.title));
+    if (t.notes) card.appendChild(el("div", "card-notes", t.notes));
 
     var meta = el("div", "card-meta");
     var dueInfo = formatDue(t.due);
@@ -566,7 +566,7 @@
     var row = el("div", "meeting-row");
     row.appendChild(el("div", "meeting-row-date mono", formatDateShort(m.date)));
     var main = el("div", "meeting-row-main");
-    main.appendChild(el("div", "meeting-row-title", escapeHtml(m.title)));
+    main.appendChild(el("div", "meeting-row-title", m.title));
     var sub = el("div", "meeting-row-sub");
     var color = clientColor(m.clientId);
     if (color){ var dot = el("span", "client-dot"); dot.style.background = color; sub.appendChild(dot); }
@@ -599,7 +599,7 @@
     var p = projects[id];
     var row = el("div", "project-row");
     var main = el("div", "project-row-main");
-    main.appendChild(el("div", "project-row-title", escapeHtml(p.name)));
+    main.appendChild(el("div", "project-row-title", p.name));
     var sub = el("div", "project-row-sub");
     var color = clientColor(p.clientId);
     if (color){ var dot = el("span", "client-dot"); dot.style.background = color; sub.appendChild(dot); }
@@ -836,7 +836,7 @@
       cb.type = "checkbox"; cb.checked = !!item.done;
       cb.addEventListener("change", function(){ item.done = cb.checked; renderActionsDraft(); });
       row.appendChild(cb);
-      row.appendChild(el("span", "action-text" + (item.done ? " done" : ""), escapeHtml(item.text)));
+      row.appendChild(el("span", "action-text" + (item.done ? " done" : ""), item.text));
       var rm = el("button", "icon-btn", "×");
       rm.type = "button"; rm.title = "Remover";
       rm.addEventListener("click", function(){
@@ -885,10 +885,10 @@
     documentsDraft.forEach(function(doc){
       var row = el("div", "document-item");
       var ext = (doc.name.split(".").pop() || "?").slice(0,4).toUpperCase();
-      row.appendChild(el("div", "document-icon", escapeHtml(ext)));
+      row.appendChild(el("div", "document-icon", ext));
 
       var info = el("div", "document-info");
-      var nameBtn = el("button", "document-name", escapeHtml(doc.name));
+      var nameBtn = el("button", "document-name", doc.name);
       nameBtn.type = "button";
       nameBtn.addEventListener("click", function(){ openDocumentBlob(doc.id, doc.name); });
       info.appendChild(nameBtn);
@@ -1032,7 +1032,7 @@
     var noneOpt = el("option", "", "Sem cliente"); noneOpt.value = "";
     sel.appendChild(noneOpt);
     Object.keys(clients).sort(function(a,b){ return (clients[a].order||0) - (clients[b].order||0); }).forEach(function(cid){
-      var opt = el("option", "", escapeHtml(clients[cid].name));
+      var opt = el("option", "", clients[cid].name);
       opt.value = cid;
       sel.appendChild(opt);
     });
@@ -1182,7 +1182,7 @@
       var currentExpense = editingExpenseId && expenses[editingExpenseId];
       if (!currentExpense || currentExpense.receiptPhotoId !== photoId) return;
       if (!photo){ info.textContent = "Foto não disponível neste dispositivo."; return; }
-      var button = el("button", "document-name", escapeHtml(photo.name || "Ver foto do recibo"));
+      var button = el("button", "document-name", photo.name || "Ver foto do recibo");
       button.type = "button";
       button.addEventListener("click", function(){ openReceiptPhoto(photoId, photo.name); });
       info.appendChild(button);
