@@ -22,10 +22,29 @@
   var FULL_MONTHS = ["janeiro","fevereiro","março","abril","maio","junho","julho","agosto","setembro","outubro","novembro","dezembro"];
   var PROJECT_STATUS_LABEL = { ativo:"Ativo", pausado:"Pausado", concluido:"Concluído" };
   var PROJECT_STATUS_ORDER = { ativo:0, pausado:1, concluido:2 };
-  var EXPENSE_CATEGORIES = ["deslocacoes","refeicoes","alojamento","material"];
-  var EXPENSE_CATEGORY_LABEL = { deslocacoes:"Deslocações", refeicoes:"Refeições", alojamento:"Alojamento", material:"Material" };
+  // Same categories (and order) as the columns of the Despesas.xlsx monthly map.
+  var EXPENSE_CATEGORIES = ["viatura","material","combustivel","almocos","jantares","refeicoes","estadias","parques","portagens","outros"];
+  var EXPENSE_CATEGORY_LABEL = {
+    viatura:"Viatura", material:"Material escritório", combustivel:"Combustível", almocos:"Almoços", jantares:"Jantares",
+    refeicoes:"Refeições gerais", estadias:"Estadias", parques:"Parques", portagens:"Portagens", outros:"Outros"
+  };
+  // Categories used before the Excel columns: shown and exported as their new equivalent.
+  var LEGACY_EXPENSE_CATEGORY = { deslocacoes:"outros", alojamento:"estadias" };
+  function expenseCategory(x){
+    var c = x && x.category;
+    c = LEGACY_EXPENSE_CATEGORY[c] || c;
+    return EXPENSE_CATEGORIES.indexOf(c) >= 0 ? c : "outros";
+  }
 
-  var currentView = "tasks"; // "tasks" | "meetings" | "projects" | "expenses"
+  var DEFAULT_BRANDS = ["Kennametal","Bass","Arno","GAIt"];
+
+  var currentView = "home"; // "home" | "tasks" | "meetings" | "projects" | "expenses"
+
+  // Sales/purchase values imported from a file: { "AAAA-MM": { "Marca": { venda:n, compra:n } } }.
+  // Kept on this device only (not synced), under a per-user key.
+  var salesData = {};
+  var mySales = {}; // my own sales: { "AAAA-MM": n|null }
+  var homeMonth = null;
 
   var clients = {};
   var tasks = {};
@@ -95,10 +114,14 @@
     if (n < 1024*1024) return (n/1024).toFixed(0) + " KB";
     return (n/(1024*1024)).toFixed(1) + " MB";
   }
+  // "1234.5" → "1 234,50 €". Built by hand because pt-PT's toLocaleString leaves
+  // four-digit amounts ungrouped ("8300,10 €"), which looks inconsistent next to "12 450,75 €".
   function formatCurrency(n){
     var v = Number(n) || 0;
-    try { return v.toLocaleString("pt-PT", { style:"currency", currency:"EUR" }); }
-    catch(e){ return v.toFixed(2) + " €"; }
+    var parts = Math.abs(v).toFixed(2).split(".");
+    var intPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+    var negative = v < 0 && parts.join("") !== "000";
+    return (negative ? "-" : "") + intPart + "," + parts[1] + " €";
   }
   function parseAmountInput(str){
     if (!str) return 0;
@@ -215,6 +238,7 @@
       if (!applyingSyncedData && window.QuadroSync && currentUserId){
         window.QuadroSync.localChanged();
       }
+      scheduleExcelSync();
     } catch(e){
       var warn = document.getElementById("storageWarning");
       if (warn){
@@ -232,8 +256,417 @@
     return expenses;
   }
 
+  // ---------- home: sales & purchases ----------
+  // Values are read from the Excel files each time; earlier versions kept a copy in this
+  // browser, which is removed so no figures stay stored outside those files.
+  function forgetStoredSalesCopy(){
+    try { localStorage.removeItem(STORAGE_KEY + ":vendasCompras"); } catch(e){}
+  }
+
+  function brandList(){
+    var seen = {};
+    var list = [];
+    function add(b){
+      var k = b.toLowerCase();
+      if (!seen[k]){ seen[k] = true; list.push(b); }
+    }
+    DEFAULT_BRANDS.forEach(add);
+    Object.keys(salesData).sort().forEach(function(ym){
+      Object.keys(salesData[ym] || {}).forEach(add);
+    });
+    return list;
+  }
+  function findBrandKey(monthData, brand){
+    if (!monthData || !brand) return null;
+    var target = brand.toLowerCase();
+    for (var b in monthData) if (b.toLowerCase() === target) return b;
+    return null;
+  }
+
+  function normalizeHeader(h){
+    return String(h || "").trim().toLowerCase()
+      .normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z]/g, "");
+  }
+  function splitCsvLine(line, sep){
+    var out = [], cur = "", inQ = false;
+    for (var i = 0; i < line.length; i++){
+      var c = line[i];
+      if (inQ){
+        if (c === '"'){
+          if (line[i+1] === '"'){ cur += '"'; i++; }
+          else inQ = false;
+        } else cur += c;
+      } else if (c === '"') inQ = true;
+      else if (c === sep){ out.push(cur); cur = ""; }
+      else cur += c;
+    }
+    out.push(cur);
+    return out.map(function(s){ return s.trim(); });
+  }
+  // Accepts "1.234,56", "1234,56", "1234.56", "1,234.56" and "€ 1 234,56".
+  function parseFileAmount(str){
+    if (typeof str === "number") return isFinite(str) ? str : null;
+    var s = String(str == null ? "" : str).replace(/[€\s ]/g, "");
+    if (!s) return null;
+    var lastComma = s.lastIndexOf(","), lastDot = s.lastIndexOf(".");
+    if (lastComma > -1 && lastDot > -1){
+      if (lastComma > lastDot) s = s.replace(/\./g, "").replace(",", ".");
+      else s = s.replace(/,/g, "");
+    } else if (lastComma > -1){
+      s = s.replace(/\./g, "").replace(",", ".");
+    } else if (lastDot > -1 && /^-?\d{1,3}(\.\d{3})+$/.test(s)){
+      s = s.replace(/\./g, "");
+    }
+    var n = parseFloat(s);
+    return isNaN(n) ? null : n;
+  }
+  // "2026-11", "2026/11", "11/2026", "11-2026", "2026-11-05", "05/11/2026" → "2026-11".
+  function parseFileMonth(str){
+    if (typeof str === "number" && str > 20000 && str < 80000){
+      // Excel date serial number (days since 1899-12-30).
+      var d = new Date(Date.UTC(1899, 11, 30) + str * 86400000);
+      return d.getUTCFullYear() + "-" + String(d.getUTCMonth()+1).padStart(2,"0");
+    }
+    var s = String(str == null ? "" : str).trim();
+    var m;
+    if ((m = s.match(/^(\d{4})[-\/.](\d{1,2})(?:[-\/.]\d{1,2})?$/))) return m[1] + "-" + m[2].padStart(2,"0");
+    if ((m = s.match(/^(\d{1,2})[-\/.](\d{4})$/))) return m[2] + "-" + m[1].padStart(2,"0");
+    if ((m = s.match(/^\d{1,2}[-\/.](\d{1,2})[-\/.](\d{4})$/))) return m[2] + "-" + m[1].padStart(2,"0");
+    return null;
+  }
+
+  function isTotalLabel(s){ return /^(sub)?total/.test(normalizeHeader(s)); }
+
+  // "Mes01", "Mês 1", "Jan", "janeiro" → 1..12; anything else → 0.
+  function headerMonthNumber(h){
+    var n = normalizeHeader(h);
+    var m = String(h == null ? "" : h).trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/\s+/g, "").match(/^mes0?(\d{1,2})$/);
+    if (m){ var k = parseInt(m[1], 10); return (k >= 1 && k <= 12) ? k : 0; }
+    for (var i = 0; i < 12; i++){
+      var full = FULL_MONTHS[i].normalize("NFD").replace(/[̀-ͯ]/g, "");
+      if (n === full || n === MONTHS[i]) return i + 1;
+    }
+    return 0;
+  }
+
+  // Finds a header row with at least 3 month columns ("Mes01"…"Mes12", "Jan"…).
+  // Returns { headerIdx, monthCols:{ 1:colIndex, … } } or null.
+  function findMonthHeader(rows){
+    for (var h = 0; h < Math.min(rows.length, 20); h++){
+      var monthCols = {}, nMonths = 0;
+      for (var idx = 0; idx < rows[h].length; idx++){
+        var k = headerMonthNumber(rows[h][idx]);
+        if (k && monthCols[k] === undefined){ monthCols[k] = idx; nMonths++; }
+      }
+      if (nMonths >= 3) return { headerIdx:h, monthCols:monthCols };
+    }
+    return null;
+  }
+  function nonEmptyRows(table){
+    var rows = table.filter(function(r){
+      return r && r.some(function(c){ return c !== null && c !== undefined && String(c).trim() !== ""; });
+    });
+    if (rows.length < 2) throw new Error("O ficheiro não tem linhas de dados.");
+    return rows;
+  }
+  function cellText(v){ return String(v == null ? "" : v).trim(); }
+
+  // Purchases per brand, in one of two layouts:
+  //  - one column per month (ERP export): Descricao | Mes01 … Mes12 | Total — one row per brand,
+  //    values for the current year;
+  //  - one row per value: Mês | Marca | Compra.
+  // Returns { data:{ "AAAA-MM": { marca: n|null } }, rows, year? }.
+  function parsePurchaseRows(table){
+    var rows = nonEmptyRows(table);
+    var found = findMonthHeader(rows);
+    if (found){
+      var header = rows[found.headerIdx];
+      var cols = Object.keys(found.monthCols).map(function(k){ return found.monthCols[k]; });
+      var brandCol = -1;
+      for (var i = 0; i < header.length; i++){
+        if (["marca","brand","descricao","fornecedor","artigo"].indexOf(normalizeHeader(header[i])) > -1){ brandCol = i; break; }
+      }
+      if (brandCol < 0) brandCol = Math.min.apply(null, cols) > 0 ? 0 : -1;
+      if (brandCol < 0) throw new Error("Não encontrei a coluna das marcas.");
+      var year = todayStr().slice(0,4);
+      var data = {}, count = 0;
+      for (var r = found.headerIdx + 1; r < rows.length; r++){
+        var brand = cellText(rows[r][brandCol]);
+        if (!brand || isTotalLabel(brand)) continue;
+        for (var k = 1; k <= 12; k++){
+          if (found.monthCols[k] === undefined) continue;
+          var ym = year + "-" + String(k).padStart(2,"0");
+          data[ym] = data[ym] || {};
+          // An empty cell clears the value: the Excel file is the source of truth.
+          data[ym][brand] = parseFileAmount(rows[r][found.monthCols[k]]);
+        }
+        count++;
+      }
+      if (!count) throw new Error("Nenhuma marca encontrada no ficheiro.");
+      return { data:data, rows:count, year:year };
+    }
+
+    var headers = rows[0].map(normalizeHeader);
+    function col(names){
+      for (var j = 0; j < headers.length; j++) if (names.indexOf(headers[j]) > -1) return j;
+      return -1;
+    }
+    var iMonth = col(["mes","month","periodo","data","date"]);
+    var iBrand = col(["marca","brand","fornecedor","descricao"]);
+    var iBuy = col(["compra","compras","valorcompra","valordecompra","valor","purchase","purchases"]);
+    if (iBrand < 0) throw new Error("Não encontrei a coluna das marcas (\"Marca\" ou \"Descricao\").");
+    if (iBuy < 0) throw new Error("Não encontrei os valores (colunas \"Mes01…Mes12\" ou \"Compra\").");
+    var fallbackMonth = todayStr().slice(0,7);
+    var out = {}, n = 0;
+    for (var x = 1; x < rows.length; x++){
+      var b = cellText(rows[x][iBrand]);
+      var m = iMonth > -1 ? parseFileMonth(rows[x][iMonth]) : fallbackMonth;
+      var v = parseFileAmount(rows[x][iBuy]);
+      if (!b || isTotalLabel(b) || !m || v === null) continue;
+      out[m] = out[m] || {};
+      var key = findBrandKey(out[m], b) || b;
+      out[m][key] = (out[m][key] || 0) + v; // repeated brand/month rows are added together
+      n++;
+    }
+    if (!n) throw new Error("Nenhuma linha válida encontrada.");
+    return { data:out, rows:n };
+  }
+
+  // My own sales: one value per month.
+  //  - one column per month: uses the "Total" row if there is one, otherwise adds up all rows;
+  //  - one row per value: Mês | Venda (rows of the same month are added together).
+  // Returns { data:{ "AAAA-MM": n|null }, year? }.
+  function parseMySalesRows(table){
+    var rows = nonEmptyRows(table);
+    var found = findMonthHeader(rows);
+    if (found){
+      var year = todayStr().slice(0,4);
+      var body = rows.slice(found.headerIdx + 1);
+      var labelCol = Math.min.apply(null, Object.keys(found.monthCols).map(function(k){ return found.monthCols[k]; })) > 0 ? 0 : -1;
+      var totalRow = labelCol < 0 ? null : body.filter(function(r){ return isTotalLabel(cellText(r[labelCol])); })[0];
+      var useRows = totalRow ? [totalRow] : body;
+      var data = {};
+      for (var k = 1; k <= 12; k++){
+        if (found.monthCols[k] === undefined) continue;
+        var sum = null;
+        useRows.forEach(function(r){
+          var v = parseFileAmount(r[found.monthCols[k]]);
+          if (v !== null) sum = (sum || 0) + v;
+        });
+        data[year + "-" + String(k).padStart(2,"0")] = sum; // empty month → no value
+      }
+      return { data:data, year:year };
+    }
+
+    var headers = rows[0].map(normalizeHeader);
+    function col(names){
+      for (var j = 0; j < headers.length; j++) if (names.indexOf(headers[j]) > -1) return j;
+      return -1;
+    }
+    var iMonth = col(["mes","month","periodo","data","date"]);
+    var iSale = col(["venda","vendas","valorvenda","valordevenda","valor","total","sale","sales"]);
+    if (iMonth < 0 || iSale < 0) throw new Error("Não encontrei os valores (colunas \"Mes01…Mes12\", ou \"Mês\" e \"Venda\").");
+    var out = {}, n = 0;
+    for (var x = 1; x < rows.length; x++){
+      var m = parseFileMonth(rows[x][iMonth]);
+      var v = parseFileAmount(rows[x][iSale]);
+      if (!m || v === null) continue;
+      out[m] = (out[m] || 0) + v;
+      n++;
+    }
+    if (!n) throw new Error("Nenhuma linha válida encontrada.");
+    return { data:out };
+  }
+
+  function parseCsvText(text){
+    var lines = String(text).replace(/^﻿/, "").split(/\r\n|\n|\r/).filter(function(l){ return l.trim() !== ""; });
+    if (!lines.length) return [];
+    var first = lines[0];
+    var sep = [";", "\t", ","].reduce(function(best, s){
+      return first.split(s).length > first.split(best).length ? s : best;
+    }, ";");
+    return lines.map(function(l){ return splitCsvLine(l, sep); });
+  }
+
+  // ---------- values from the Compras / Vendas folders (view only) ----------
+  // The Excel files live in the "Compras" and "Vendas" folders next to the app on this computer
+  // (they are git-ignored, so never on GitHub). The app only reads them; it never changes or sends them.
+  // They are found only when the app is opened from this computer (local server on the project folder).
+  var DATA_FOLDERS = { compra:["Compras","Compra"], venda:["Vendas","Venda"] };
+  var KIND_LABEL = { compra:"compras", venda:"vendas" };
+  var folderLoad = null;
+
+  function setHomeImportStatus(kind, message, isError){
+    var s = document.getElementById(kind === "venda" ? "homeSaleStatus" : "homePurchaseStatus");
+    s.textContent = message || "";
+    s.classList.toggle("error", !!isError);
+    // The status lines only show when a file could not be read.
+    document.getElementById("homeFilesStatus").hidden =
+      !document.querySelector("#homeFilesStatus .home-import-status.error");
+  }
+
+  function isDataFileName(name){ return /\.(xlsx|csv)$/i.test(name) && name.indexOf("~$") !== 0; }
+
+  // Looks for the first Excel/CSV file in the kind's folder. Uses the folder listing when the
+  // local server provides one, else tries "<Pasta>/<Pasta>.xlsx" (e.g. Compras/Compras.xlsx).
+  function findFolderFile(kind){
+    var folders = DATA_FOLDERS[kind];
+    function tryFolder(i){
+      if (i >= folders.length) return Promise.resolve(null);
+      var folder = folders[i];
+      return fetch(folder + "/", { cache:"no-store" }).then(function(res){
+        if (!res.ok || (res.headers.get("content-type") || "").indexOf("text/html") < 0) return null;
+        return res.text().then(function(html){
+          var doc = new DOMParser().parseFromString(html, "text/html");
+          var names = Array.prototype.map.call(doc.querySelectorAll("a[href]"), function(a){
+            var href = a.getAttribute("href").split(/[?#]/)[0];
+            try { href = decodeURIComponent(href); } catch(e){}
+            return href.split("/").pop();
+          }).filter(isDataFileName).sort();
+          return names.length ? folder + "/" + names[0] : null;
+        });
+      }).catch(function(){ return null; }).then(function(found){
+        if (found) return found;
+        var guess = folder + "/" + folder + ".xlsx";
+        return fetch(guess, { method:"HEAD", cache:"no-store" })
+          .then(function(res){ return res.ok ? guess : null; })
+          .catch(function(){ return null; });
+      }).then(function(found){ return found || tryFolder(i + 1); });
+    }
+    return tryFolder(0);
+  }
+
+  function readFolderFile(path){
+    return fetch(path.split("/").map(encodeURIComponent).join("/"), { cache:"no-store" }).then(function(res){
+      if (!res.ok) throw new Error("não foi possível abrir " + path);
+      if (/\.csv$/i.test(path)) return res.text().then(parseCsvText);
+      if (!window.QuadroXlsx) throw new Error("leitor de Excel indisponível");
+      return res.arrayBuffer().then(window.QuadroXlsx.read).then(function(r){ return r.rows; });
+    });
+  }
+
+  function applyParsed(kind, parsed){
+    Object.keys(parsed.data).forEach(function(ym){
+      if (kind === "venda"){ mySales[ym] = parsed.data[ym]; return; }
+      salesData[ym] = salesData[ym] || {};
+      Object.keys(parsed.data[ym]).forEach(function(brand){
+        var key = findBrandKey(salesData[ym], brand) || brand;
+        salesData[ym][key] = { compra:parsed.data[ym][brand] };
+      });
+    });
+  }
+
+  function loadKind(kind){
+    return findFolderFile(kind).then(function(path){
+      if (!path){
+        setHomeImportStatus(kind, "Sem ficheiro na pasta " + DATA_FOLDERS[kind][0] + ".", false);
+        return;
+      }
+      return readFolderFile(path).then(function(rows){
+        var parsed = kind === "venda" ? parseMySalesRows(rows) : parsePurchaseRows(rows);
+        applyParsed(kind, parsed);
+        var d = new Date();
+        setHomeImportStatus(kind, "Valores de " + path + " (lido às " + String(d.getHours()).padStart(2,"0") + ":" +
+          String(d.getMinutes()).padStart(2,"0") + (parsed.year ? ", meses de " + parsed.year : "") + ").", false);
+      });
+    }).catch(function(e){
+      setHomeImportStatus(kind, "Não foi possível ler o ficheiro de " + KIND_LABEL[kind] + ": " + (e && e.message ? e.message : e) + ".", true);
+    });
+  }
+
+  // Re-reads both folders (on start and every time "Início" is opened), so edits to the Excel files show up.
+  function loadFolderData(){
+    if (folderLoad) return folderLoad;
+    salesData = {};
+    mySales = {};
+    folderLoad = Promise.all([loadKind("compra"), loadKind("venda")]).then(function(){
+      folderLoad = null;
+      if (currentView === "home") renderHome();
+    });
+    return folderLoad;
+  }
+
+  function shiftHomeMonth(delta){
+    var parts = homeMonth.split("-");
+    var d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1 + delta, 1);
+    homeMonth = d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0");
+    renderHome();
+  }
+
+  function renderHome(){
+    if (!homeMonth) homeMonth = todayStr().slice(0,7);
+    var brands = brandList();
+
+    document.getElementById("homeMonthLabel").textContent = monthLabel(homeMonth);
+    var monthData = salesData[homeMonth] || {};
+
+    // My own sales value for the month (from the sales Excel).
+    var sale = mySales[homeMonth];
+    var hasSale = sale !== null && sale !== undefined;
+    document.getElementById("homeSaleValue").textContent = hasSale ? formatCurrency(sale) : "—";
+    document.getElementById("homeSaleHint").textContent = hasSale
+      ? "As minhas vendas em " + monthLabel(homeMonth)
+      : "Sem valor de venda para este mês";
+
+    var rows = brands.map(function(b){
+      var entry = monthData[findBrandKey(monthData, b)];
+      return { brand:b, compra:(entry && entry.compra != null) ? entry.compra : null };
+    });
+    var totalBuy = 0, brandsWithBuy = 0, maxBuy = 0;
+    rows.forEach(function(r){
+      if (r.compra === null) return;
+      totalBuy += r.compra;
+      brandsWithBuy++;
+      if (r.compra > maxBuy) maxBuy = r.compra;
+    });
+    document.getElementById("homePurchaseValue").textContent = brandsWithBuy ? formatCurrency(totalBuy) : "—";
+    document.getElementById("homePurchaseHint").textContent = brandsWithBuy
+      ? "Soma de " + brandsWithBuy + " marca(s) em " + monthLabel(homeMonth)
+      : "Sem valores de compra para este mês";
+
+    // Brands with a value first (largest first), then the ones without a value.
+    rows.sort(function(a, b){
+      if (a.compra === null && b.compra === null) return 0;
+      if (a.compra === null) return 1;
+      if (b.compra === null) return -1;
+      return b.compra - a.compra;
+    });
+    var list = document.getElementById("homeBrandList");
+    list.innerHTML = "";
+    rows.forEach(function(r){
+      var li = el("li", "home-brand-row" + (r.compra === null ? " is-empty" : ""));
+      var name = el("span", "home-brand-name");
+      name.textContent = r.brand;
+      var bar = el("span", "home-brand-bar");
+      var fill = el("span", "home-brand-bar-fill");
+      fill.style.width = (r.compra !== null && maxBuy > 0 ? Math.max(2, Math.round(r.compra / maxBuy * 100)) : 0) + "%";
+      bar.appendChild(fill);
+      var value = el("span", "home-brand-value mono");
+      value.textContent = r.compra !== null ? formatCurrency(r.compra) : "—";
+      li.appendChild(name);
+      li.appendChild(bar);
+      li.appendChild(value);
+      list.appendChild(li);
+    });
+  }
+
   function render(){
+    var isHome = currentView === "home";
+    document.getElementById("filters").hidden = isHome;
+    document.getElementById("homeView").hidden = !isHome;
+    document.getElementById("newItemBtn").hidden = isHome;
+    if (isHome){
+      document.getElementById("taskQuickAdd").hidden = true;
+      document.getElementById("board").hidden = true;
+      document.getElementById("meetingsView").hidden = true;
+      document.getElementById("projectsView").hidden = true;
+      document.getElementById("expensesView").hidden = true;
+      renderHome();
+      return;
+    }
     renderFilters();
+    document.getElementById("taskQuickAdd").hidden = currentView !== "tasks";
     document.getElementById("board").hidden = currentView !== "tasks";
     document.getElementById("meetingsView").hidden = currentView !== "meetings";
     document.getElementById("projectsView").hidden = currentView !== "projects";
@@ -283,9 +716,46 @@
     });
   }
 
-  // ---------- tasks board ----------
+  // ---------- tasks: compact list grouped by status ----------
+  var STATUS_NEXT = { todo:"doing", doing:"done", done:"todo" };
+  var STATUS_ICON = { todo:"", doing:"", done:"✓" };
+  var flashTaskId = null; // row to highlight after it was added or moved
+  var doneCollapsed = true;
+  try { doneCollapsed = localStorage.getItem("qt_tasks_done_open") !== "1"; } catch(e){}
+
+  // How the list is organised: "status" (A Fazer / Em Curso / Concluído) or "client".
+  var taskGrouping = "status";
+  var showDoneByClient = false;
+  var collapsedClients = {}; // client id ("none" = sem cliente) → true when its group is closed
+  try {
+    taskGrouping = localStorage.getItem("qt_tasks_grouping") === "client" ? "client" : "status";
+    showDoneByClient = localStorage.getItem("qt_tasks_show_done") === "1";
+    collapsedClients = JSON.parse(localStorage.getItem("qt_tasks_collapsed_clients") || "{}") || {};
+  } catch(e){}
+  function saveTaskViewPrefs(){
+    try {
+      localStorage.setItem("qt_tasks_grouping", taskGrouping);
+      localStorage.setItem("qt_tasks_show_done", showDoneByClient ? "1" : "0");
+      localStorage.setItem("qt_tasks_collapsed_clients", JSON.stringify(collapsedClients));
+    } catch(e){}
+  }
+  function renderTaskToolbar(){
+    Array.prototype.forEach.call(document.querySelectorAll("#taskGroupingSeg button"), function(b){
+      b.classList.toggle("active", b.dataset.val === taskGrouping);
+      b.setAttribute("aria-pressed", b.dataset.val === taskGrouping ? "true" : "false");
+    });
+    var showDone = document.getElementById("taskShowDone");
+    showDone.checked = showDoneByClient;
+    showDone.parentNode.hidden = taskGrouping !== "client";
+  }
+
   function sortedIdsForStatus(statusId, ids){
-    return ids.filter(function(id){ return tasks[id].status === statusId; }).sort(function(a,b){
+    var list = ids.filter(function(id){ return tasks[id].status === statusId; });
+    if (statusId === "done"){
+      // Most recently finished first.
+      return list.sort(function(a,b){ return (tasks[b].updatedAt||0) - (tasks[a].updatedAt||0); });
+    }
+    return list.sort(function(a,b){
       var ta = tasks[a], tb = tasks[b];
       var pa = PRIORITY_ORDER[ta.priority] != null ? PRIORITY_ORDER[ta.priority] : 1;
       var pb = PRIORITY_ORDER[tb.priority] != null ? PRIORITY_ORDER[tb.priority] : 1;
@@ -297,92 +767,294 @@
   }
 
   function renderBoard(){
+    renderTaskToolbar();
+    if (taskGrouping === "client") renderBoardByClient();
+    else renderBoardByStatus();
+    flashTaskId = null;
+  }
+
+  // One group per client (in the client order), "Sem cliente" last. Inside a group:
+  // Em Curso first, then A Fazer, then (optionally) Concluído. Drag a row onto another
+  // client's group to move it to that client.
+  var STATUS_ORDER_IN_CLIENT = { doing:0, todo:1, done:2 };
+  function renderBoardByClient(){
+    var board = document.getElementById("board");
+    board.innerHTML = "";
+    var visIds = visibleIds();
+    var clientIds = Object.keys(clients).sort(function(a,b){ return (clients[a].order||0) - (clients[b].order||0); });
+    clientIds.push(null);
+
+    var shown = 0;
+    clientIds.forEach(function(cid){
+      var key = cid || "none";
+      var all = visIds.filter(function(id){ return (tasks[id].clientId || null) === cid || (cid === null && !clients[tasks[id].clientId]); });
+      var open = all.filter(function(id){ return tasks[id].status !== "done"; });
+      var doneCount = all.length - open.length;
+      var ids = showDoneByClient ? all : open;
+      if (!ids.length && !(activeClientFilter && activeClientFilter === cid)) return; // hide clients with nothing to show
+      shown++;
+      ids = ids.slice().sort(function(a, b){
+        var sa = STATUS_ORDER_IN_CLIENT[tasks[a].status], sb = STATUS_ORDER_IN_CLIENT[tasks[b].status];
+        if (sa !== sb) return sa - sb;
+        var order = sortedIdsForStatus(tasks[a].status, [a, b]);
+        return order[0] === a ? -1 : 1;
+      });
+
+      var collapsed = !!collapsedClients[key];
+      var group = el("section", "task-group task-group-client" + (collapsed ? " is-collapsed" : ""));
+      var color = cid ? clientColor(cid) : null;
+      if (color) group.style.setProperty("--client-color", color);
+      var head = el("button", "task-group-head");
+      head.type = "button";
+      head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      var dot = el("span", "client-dot");
+      dot.style.background = color || "var(--text-faint)";
+      head.appendChild(dot);
+      var name = el("span", "task-group-title task-group-client-name");
+      name.textContent = cid ? clients[cid].name : "Sem cliente";
+      head.appendChild(name);
+      head.appendChild(el("span", "column-count mono", String(open.length)));
+      if (doneCount){
+        var doneInfo = el("span", "task-group-done-info");
+        doneInfo.textContent = doneCount + (doneCount === 1 ? " concluída" : " concluídas");
+        head.appendChild(doneInfo);
+      }
+      head.appendChild(el("span", "task-group-chevron", collapsed ? "▸" : "▾"));
+      head.addEventListener("click", function(){
+        if (collapsedClients[key]) delete collapsedClients[key]; else collapsedClients[key] = true;
+        saveTaskViewPrefs();
+        renderBoard();
+      });
+      group.appendChild(head);
+
+      group.addEventListener("dragover", function(e){ if (dragTaskId){ e.preventDefault(); group.classList.add("drag-over"); } });
+      group.addEventListener("dragleave", function(e){ if (!group.contains(e.relatedTarget)) group.classList.remove("drag-over"); });
+      group.addEventListener("drop", function(e){
+        e.preventDefault();
+        group.classList.remove("drag-over");
+        if (dragTaskId) setTaskClient(dragTaskId, cid);
+      });
+
+      if (!collapsed){
+        var list = el("div", "task-list");
+        if (!ids.length) list.appendChild(el("div", "task-empty", "Sem tarefas por fazer."));
+        ids.forEach(function(id){ list.appendChild(renderTaskRow(id, true)); });
+        group.appendChild(list);
+      }
+      board.appendChild(group);
+    });
+    if (!shown){
+      board.appendChild(el("div", "task-empty task-empty-all", showDoneByClient ? "Ainda não há tarefas." : "Nada por fazer. Escreve uma tarefa acima."));
+    }
+  }
+
+  function renderBoardByStatus(){
     var board = document.getElementById("board");
     board.innerHTML = "";
     var visIds = visibleIds();
 
     STATUSES.forEach(function(status){
-      var col = el("div", "column");
-      var head = el("div", "column-head");
-      var left = el("div", "column-head-left");
-      left.appendChild(el("span", "column-title", status.label));
       var ids = sortedIdsForStatus(status.id, visIds);
-      left.appendChild(el("span", "column-count mono", String(ids.length)));
-      head.appendChild(left);
-      col.appendChild(head);
+      var collapsible = status.id === "done";
+      var collapsed = collapsible && doneCollapsed;
 
-      var quickAdd = el("div", "quick-add");
-      var input = el("input");
-      input.type = "text";
-      input.placeholder = "Adicionar tarefa rápida...";
-      input.maxLength = 140;
-      input.addEventListener("keydown", function(e){
-        if (e.key === "Enter" && input.value.trim()){
-          quickAddTask(input.value.trim(), status.id);
-          input.value = "";
-        }
-      });
-      quickAdd.appendChild(input);
-      col.appendChild(quickAdd);
+      var group = el("section", "task-group task-group-" + status.id + (collapsed ? " is-collapsed" : ""));
+      var head = el(collapsible ? "button" : "div", "task-group-head");
+      if (collapsible){
+        head.type = "button";
+        head.setAttribute("aria-expanded", collapsed ? "false" : "true");
+        head.addEventListener("click", function(){
+          doneCollapsed = !doneCollapsed;
+          try { localStorage.setItem("qt_tasks_done_open", doneCollapsed ? "0" : "1"); } catch(e){}
+          renderBoard();
+        });
+      }
+      head.appendChild(el("span", "task-group-title", status.label));
+      head.appendChild(el("span", "column-count mono", String(ids.length)));
+      if (collapsible) head.appendChild(el("span", "task-group-chevron", collapsed ? "▸" : "▾"));
+      group.appendChild(head);
 
-      var zone = el("div", "column-dropzone");
-      zone.addEventListener("dragover", function(e){ e.preventDefault(); zone.classList.add("drag-over"); });
-      zone.addEventListener("dragleave", function(){ zone.classList.remove("drag-over"); });
-      zone.addEventListener("drop", function(e){
+      // Drag a row onto another group to change its status (mouse; on touch use the status button).
+      group.addEventListener("dragover", function(e){ if (dragTaskId){ e.preventDefault(); group.classList.add("drag-over"); } });
+      group.addEventListener("dragleave", function(e){ if (!group.contains(e.relatedTarget)) group.classList.remove("drag-over"); });
+      group.addEventListener("drop", function(e){
         e.preventDefault();
-        zone.classList.remove("drag-over");
+        group.classList.remove("drag-over");
         if (dragTaskId) setTaskStatus(dragTaskId, status.id);
       });
 
-      if (ids.length === 0){
-        zone.appendChild(el("div", "empty-hint", "Sem tarefas aqui."));
-      } else {
-        ids.forEach(function(id){ zone.appendChild(renderCard(id, status.id)); });
+      if (!collapsed){
+        var list = el("div", "task-list");
+        if (ids.length === 0) list.appendChild(el("div", "task-empty", status.id === "todo" ? "Nada por fazer. Escreve uma tarefa acima." : "Sem tarefas."));
+        ids.forEach(function(id){ list.appendChild(renderTaskRow(id)); });
+        group.appendChild(list);
       }
-      col.appendChild(zone);
-      board.appendChild(col);
+      board.appendChild(group);
     });
+    flashTaskId = null;
   }
 
-  function renderCard(id, statusId){
+  function renderTaskRow(id, inClientGroup){
     var t = tasks[id];
-    var card = el("div", "card");
-    card.draggable = true;
+    var row = el("div", "task-row task-" + t.status + (id === flashTaskId ? " flash" : ""));
+    row.draggable = true;
     var color = clientColor(t.clientId);
-    if (color) card.style.setProperty("--client-color", color);
+    if (color) row.style.setProperty("--client-color", color);
 
-    var top = el("div", "card-top");
-    if (color){ var dot = el("span", "client-dot"); dot.style.background = color; top.appendChild(dot); }
-    var cname = clientName(t.clientId);
-    top.appendChild(el("span", "client-name" + (cname ? "" : " none"), escapeHtml(cname || "Sem cliente")));
-    top.appendChild(el("span", "priority-badge priority-" + t.priority, PRIORITY_LABEL[t.priority] || "Média"));
-    card.appendChild(top);
+    var statusLabel = (STATUSES.filter(function(s){ return s.id === t.status; })[0] || {}).label || "";
+    var nextLabel = (STATUSES.filter(function(s){ return s.id === STATUS_NEXT[t.status]; })[0] || {}).label || "";
+    var statusBtn = el("button", "task-status status-" + t.status);
+    statusBtn.type = "button";
+    statusBtn.textContent = STATUS_ICON[t.status] || "";
+    statusBtn.title = statusLabel + " — clica para passar a " + nextLabel;
+    statusBtn.setAttribute("aria-label", statusBtn.title);
+    statusBtn.addEventListener("click", function(e){
+      e.stopPropagation();
+      setTaskStatus(id, STATUS_NEXT[t.status] || "todo");
+    });
+    row.appendChild(statusBtn);
 
-    card.appendChild(el("div", "card-title", escapeHtml(t.title)));
-    if (t.notes) card.appendChild(el("div", "card-notes", escapeHtml(t.notes)));
+    var main = el("div", "task-row-main");
+    var title = el("div", "task-title");
+    title.textContent = t.title;
+    main.appendChild(title);
+    var subParts = [];
+    var cname = inClientGroup ? null : clientName(t.clientId);
+    if (cname) subParts.push(cname);
+    if (t.projectId && projects[t.projectId]) subParts.push("Projeto: " + projects[t.projectId].name);
+    if (t.points && t.points.length){
+      var doneCount = t.points.filter(function(p){ return p.done; }).length;
+      subParts.push(doneCount + "/" + t.points.length + " pontos");
+    }
+    if (t.notes) subParts.push(String(t.notes).split(/\r?\n/)[0]);
+    if (subParts.length){
+      var sub = el("div", "task-sub");
+      if (color && cname){ var dot = el("span", "client-dot"); dot.style.background = color; sub.appendChild(dot); }
+      sub.appendChild(document.createTextNode(subParts.join(" · ")));
+      main.appendChild(sub);
+    }
+    row.appendChild(main);
 
-    var meta = el("div", "card-meta");
-    var dueInfo = formatDue(t.due);
-    meta.appendChild(el("span", "due mono" + (dueInfo ? " " + dueInfo.cls : ""), dueInfo ? dueInfo.text : ""));
+    var side = el("div", "task-side");
+    var dueInfo = t.status === "done" ? null : formatDue(t.due);
+    if (dueInfo){
+      var due = el("span", "due mono " + dueInfo.cls);
+      due.textContent = dueInfo.text;
+      side.appendChild(due);
+    }
+    if (t.priority && t.priority !== "media" && t.status !== "done"){
+      var prio = el("span", "priority-badge priority-" + t.priority);
+      prio.textContent = PRIORITY_LABEL[t.priority];
+      side.appendChild(prio);
+    }
+    row.appendChild(side);
 
-    var move = el("div", "card-move");
-    var idx = STATUSES.findIndex(function(s){ return s.id === statusId; });
-    var back = el("button", "icon-btn", "‹");
-    back.title = "Mover para trás";
-    back.disabled = idx === 0;
-    back.addEventListener("click", function(e){ e.stopPropagation(); if (idx > 0) setTaskStatus(id, STATUSES[idx-1].id); });
-    var fwd = el("button", "icon-btn", "›");
-    fwd.title = "Mover para a frente";
-    fwd.disabled = idx === STATUSES.length - 1;
-    fwd.addEventListener("click", function(e){ e.stopPropagation(); if (idx < STATUSES.length - 1) setTaskStatus(id, STATUSES[idx+1].id); });
-    move.appendChild(back); move.appendChild(fwd);
-    meta.appendChild(move);
-    card.appendChild(meta);
+    row.addEventListener("click", function(){ openTaskModal(id); });
+    row.addEventListener("dragstart", function(){ dragTaskId = id; row.classList.add("dragging"); });
+    row.addEventListener("dragend", function(){ dragTaskId = null; row.classList.remove("dragging"); });
+    return row;
+  }
 
-    card.addEventListener("click", function(){ openTaskModal(id); });
-    card.addEventListener("dragstart", function(){ dragTaskId = id; card.classList.add("dragging"); });
-    card.addEventListener("dragend", function(){ dragTaskId = null; card.classList.remove("dragging"); });
-    return card;
+  // ---------- quick add: "Ligar ao João amanhã !alta @Cliente" ----------
+  var WEEKDAYS = ["domingo","segunda","terca","quarta","quinta","sexta","sabado"];
+  function plainWord(s){ return String(s).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, ""); }
+  function dateStr(d){ return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0"); }
+
+  // Returns a due date for a word ("hoje", "amanhã", "sexta-feira", "sábado", "25/11", "25/11/2026"), else null.
+  function dueFromWord(word){
+    var w = plainWord(word).replace(/[,.;]$/, "");
+    var today = new Date(); today.setHours(0,0,0,0);
+    if (w === "hoje") return dateStr(today);
+    if (w === "amanha"){ today.setDate(today.getDate() + 1); return dateStr(today); }
+    var m = w.match(/^(segunda|terca|quarta|quinta|sexta)-feira$/) || w.match(/^(sabado|domingo)$/);
+    if (m){
+      var target = WEEKDAYS.indexOf(m[1]);
+      var diff = (target - today.getDay() + 7) % 7 || 7; // always the next one, never today
+      today.setDate(today.getDate() + diff);
+      return dateStr(today);
+    }
+    m = w.match(/^(\d{1,2})[\/.-](\d{1,2})(?:[\/.-](\d{2,4}))?$/);
+    if (m){
+      var day = parseInt(m[1], 10), month = parseInt(m[2], 10);
+      var year = m[3] ? parseInt(m[3], 10) : today.getFullYear();
+      if (year < 100) year += 2000;
+      var d = new Date(year, month - 1, day);
+      if (d.getMonth() !== month - 1 || d.getDate() !== day) return null; // e.g. 31/02
+      if (!m[3] && d < today) d.setFullYear(year + 1); // "05/01" in December → next year
+      return dateStr(d);
+    }
+    return null;
+  }
+
+  function clientFromWord(word){
+    var w = plainWord(word.slice(1));
+    if (!w) return null;
+    var ids = Object.keys(clients);
+    for (var i = 0; i < ids.length; i++){
+      if (plainWord(clients[ids[i]].name).replace(/\s+/g, "").indexOf(w) === 0) return ids[i];
+    }
+    return null;
+  }
+
+  function parseQuickTask(text){
+    var out = { title:"", priority:"media", due:"", clientId:activeClientFilter || null };
+    var rest = [];
+    String(text).trim().split(/\s+/).forEach(function(word){
+      var w = plainWord(word);
+      var p = w.match(/^!(alta|media|baixa|a|m|b)$/);
+      if (p){ out.priority = { a:"alta", m:"media", b:"baixa" }[p[1]] || p[1]; return; }
+      if (word.charAt(0) === "@" && word.length > 1){
+        var cid = clientFromWord(word);
+        if (cid){ out.clientId = cid; out.clientExplicit = true; return; }
+      }
+      if (!out.due){
+        var due = dueFromWord(word);
+        if (due){ out.due = due; return; }
+      }
+      rest.push(word);
+    });
+    out.title = rest.join(" ");
+    return out;
+  }
+
+  // Shortcuts typed in the title of a NEW task ("Ligar ao João amanhã !alta @cliente"):
+  // a live hint under the title, and when leaving the title the prazo/prioridade/cliente
+  // fields are filled in and the shortcut words are removed from the title.
+  function renderQuickPreview(){
+    var preview = document.getElementById("taskQuickPreview");
+    var value = document.getElementById("taskTitle").value;
+    if (editingTaskId){ preview.hidden = true; return; }
+    preview.hidden = false;
+    var q = parseQuickTask(value);
+    var parts = [];
+    if (q.due) parts.push("Prazo: " + (formatDue(q.due) || {}).text);
+    if (q.priority !== "media") parts.push("Prioridade: " + PRIORITY_LABEL[q.priority]);
+    if (q.clientExplicit) parts.push("Cliente: " + clientName(q.clientId));
+    preview.textContent = parts.length
+      ? parts.join(" · ")
+      : "Atalhos: hoje · amanhã · sexta-feira · 25/11 · !alta · !baixa · @cliente";
+    preview.classList.toggle("has-parts", parts.length > 0);
+  }
+
+  function applyTitleShortcuts(){
+    if (editingTaskId) return;
+    var titleInput = document.getElementById("taskTitle");
+    var q = parseQuickTask(titleInput.value);
+    if (!q.due && q.priority === "media" && !q.clientExplicit) return;
+    titleInput.value = q.title;
+    if (q.due) document.getElementById("taskDue").value = q.due;
+    if (q.priority !== "media") setSegValue("prioritySeg", q.priority);
+    if (q.clientExplicit){
+      document.getElementById("taskClient").value = q.clientId;
+      document.getElementById("taskClientError").hidden = true;
+      document.getElementById("taskNewClientRow").hidden = true;
+      populateTaskProjectSelect(document.getElementById("taskProject").value);
+    }
+    renderQuickPreview();
+  }
+
+  function openNewTaskFromList(){
+    openTaskModal(null, "todo");
   }
 
   // ---------- meetings list ----------
@@ -479,9 +1151,12 @@
     var byDay = {};
     ids.forEach(function(id){
       var x = expenses[id];
-      var cat = EXPENSE_CATEGORIES.indexOf(x.category) >= 0 ? x.category : "material";
+      var cat = expenseCategory(x);
       var amt = Number(x.amount) || 0;
-      if (!byDay[x.date]) byDay[x.date] = { deslocacoes:0, refeicoes:0, alojamento:0, material:0, total:0 };
+      if (!byDay[x.date]){
+        byDay[x.date] = { total:0 };
+        EXPENSE_CATEGORIES.forEach(function(c){ byDay[x.date][c] = 0; });
+      }
       byDay[x.date][cat] += amt;
       byDay[x.date].total += amt;
     });
@@ -500,7 +1175,8 @@
     var oldEmpty = table.parentNode.querySelector(".expenses-table-empty");
     if (oldEmpty) oldEmpty.remove();
 
-    var grand = { deslocacoes:0, refeicoes:0, alojamento:0, material:0, total:0 };
+    var grand = { total:0 };
+    EXPENSE_CATEGORIES.forEach(function(c){ grand[c] = 0; });
     days.forEach(function(d){
       EXPENSE_CATEGORIES.forEach(function(c){ grand[c] += byDay[d][c]; });
       grand.total += byDay[d].total;
@@ -537,9 +1213,13 @@
     ids.forEach(function(id){
       var x = expenses[id];
       var row = el("div", "day-expense-item");
-      row.appendChild(el("div", "expense-cat-badge expense-cat-" + (x.category || "material"), EXPENSE_CATEGORY_LABEL[x.category] || "Material"));
+      var cat = expenseCategory(x);
+      var badge = el("div", "expense-cat-badge expense-cat-" + cat);
+      badge.textContent = EXPENSE_CATEGORY_LABEL[cat] + (cat === "combustivel" && x.payment === "frota" ? " · frota" : "");
+      row.appendChild(badge);
       var descWrap = el("div", "day-expense-desc");
-      descWrap.textContent = x.description || "";
+      var companion = mealCompanion(x);
+      descWrap.textContent = (x.description || "") + (companion ? (x.description ? " · " : "") + (companion === "sozinho" ? "sozinho" : "com " + companion) : "");
       if (x.supplier){
         var supplier = el("span", "hint-inline");
         supplier.textContent = " — " + x.supplier;
@@ -574,12 +1254,13 @@
       if (/[;"\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
       return s;
     }
-    var lines = ["Data;Categoria;Cliente;Fornecedor;Descrição;Valor (€)"];
+    var lines = ["Data;Categoria;Com quem;Cliente;Fornecedor;Descrição;Valor (€)"];
     ids.forEach(function(id){
       var x = expenses[id];
       lines.push([
         csvField(x.date || ""),
-        csvField(EXPENSE_CATEGORY_LABEL[x.category] || ""),
+        csvField(EXPENSE_CATEGORY_LABEL[expenseCategory(x)] + (x.payment === "frota" ? " (cartão frota)" : "")),
+        csvField(mealCompanion(x)),
         csvField(clientName(x.clientId) || ""),
         csvField(x.supplier || ""),
         csvField(x.description || ""),
@@ -607,22 +1288,37 @@
   }
 
   // ---------- task ops ----------
-  function quickAddTask(title, statusId){
-    var id = genId();
-    tasks[id] = { title:title, clientId:activeClientFilter||null, priority:"media", status:statusId, due:"", notes:"", createdAt:Date.now(), updatedAt:Date.now() };
+  function setTaskClient(id, clientId){
+    if (!tasks[id] || (tasks[id].clientId || null) === (clientId || null)) return;
+    tasks[id].clientId = clientId || null; tasks[id].updatedAt = Date.now();
+    flashTaskId = id;
     saveStore(); render();
   }
   function setTaskStatus(id, statusId){
     if (!tasks[id] || tasks[id].status === statusId) return;
     tasks[id].status = statusId; tasks[id].updatedAt = Date.now();
+    flashTaskId = id;
     saveStore(); render();
   }
   function saveTaskFromModal(){
+    applyTitleShortcuts();
     var title = document.getElementById("taskTitle").value.trim();
     if (!title){ document.getElementById("taskTitle").focus(); return; }
+    var clientId = document.getElementById("taskClient").value;
+    if (clientId === "__new__") clientId = "";
+    // New tasks must have a client; older tasks without one can still be edited.
+    if (!clientId && (!editingTaskId || tasks[editingTaskId].clientId)){
+      document.getElementById("taskClientError").hidden = false;
+      document.getElementById("taskClient").focus();
+      return;
+    }
+    // A point typed but not yet added with Enter is kept too.
+    if (document.getElementById("newPointInput").value.trim()) addPointDraft();
     var payload = {
       title:title,
-      clientId: document.getElementById("taskClient").value || null,
+      clientId: clientId || null,
+      projectId: document.getElementById("taskProject").value || null,
+      points: pointsDraft.slice(),
       priority: document.getElementById("prioritySeg").dataset.value,
       status: document.getElementById("statusSeg").dataset.value,
       due: document.getElementById("taskDue").value || "",
@@ -630,7 +1326,7 @@
       updatedAt: Date.now()
     };
     if (editingTaskId){ tasks[editingTaskId] = Object.assign({}, tasks[editingTaskId], payload); }
-    else { payload.createdAt = Date.now(); tasks[genId()] = payload; }
+    else { payload.createdAt = Date.now(); var newId = genId(); tasks[newId] = payload; flashTaskId = newId; }
     saveStore(); closeTaskModal(); render();
   }
   function deleteEditingTask(){
@@ -788,16 +1484,45 @@
   function saveExpenseFromModal(){
     var amount = parseAmountInput(document.getElementById("expenseAmount").value);
     var description = document.getElementById("expenseDescription").value.trim();
-    if (amount <= 0){ document.getElementById("expenseAmount").focus(); return; }
+    // The value is always required (fleet card included).
+    if (amount <= 0){
+      document.getElementById("expenseAmountError").hidden = false;
+      document.getElementById("expenseAmount").focus();
+      return;
+    }
+    if (!validateMealFields()) return;
     var payload = {
       date: document.getElementById("expenseDate").value || todayStr(),
       category: document.getElementById("expenseCategorySeg").dataset.value,
+      payment: null,
+      fuel: null,
+      mealWith: null,
+      mealSupplier: "",
+      mealColleague: "",
       clientId: document.getElementById("expenseClient").value || null,
       supplier: document.getElementById("expenseSupplier").value.trim(),
       description: description,
       amount: amount,
       updatedAt: Date.now()
     };
+    if (isMealCategory(payload.category)){
+      payload.mealWith = document.getElementById("mealWithSeg").dataset.value;
+      if (payload.mealWith !== "cliente") payload.clientId = null;
+      if (payload.mealWith === "fornecedor") payload.mealSupplier = document.getElementById("mealSupplier").value.trim();
+      if (payload.mealWith === "colega") payload.mealColleague = document.getElementById("mealSupplier").value.trim();
+    } else {
+      // Only meals have a client / supplier (restaurant); other categories never do.
+      payload.clientId = null;
+      payload.supplier = "";
+    }
+    if (payload.category === "combustivel"){
+      // The fleet-card station is shown as the supplier in the day list.
+      payload.payment = document.getElementById("expensePaymentSeg").dataset.value;
+      if (payload.payment === "frota"){
+        payload.fuel = readFuelFields();
+        payload.supplier = payload.fuel.station;
+      }
+    }
     if (editingExpenseId){ expenses[editingExpenseId] = Object.assign({}, expenses[editingExpenseId], payload); }
     else { payload.createdAt = Date.now(); expenses[genId()] = payload; }
     saveStore(); closeExpenseModal(); render();
@@ -808,11 +1533,317 @@
     saveStore(); closeExpenseModal(); render();
   }
 
+  // ---------- meals (almoços / jantares / refeições gerais): with whom ----------
+  // "Sozinho", "Cliente" (client required), "Fornecedor" or "Colega" (name required).
+  // The supplier and colleague names share one input; each keeps its own value while switching.
+  var MEAL_NAME_FIELD = {
+    fornecedor: { key:"mealSupplier", label:"Qual fornecedor", placeholder:"Ex: Kennametal", error:"Indica o fornecedor.", base:DEFAULT_BRANDS },
+    colega: { key:"mealColleague", label:"Qual colega", placeholder:"Ex: Nuno Teixeira", error:"Indica o colega.", base:[] }
+  };
+  var mealNameDraft = { fornecedor:"", colega:"" };
+  var mealNameShown = null; // which kind the shared input currently holds
+
+  function isMealCategory(cat){ return cat === "almocos" || cat === "jantares" || cat === "refeicoes"; }
+  function mealCompanion(x){
+    if (!x || !isMealCategory(expenseCategory(x)) || !x.mealWith) return "";
+    if (x.mealWith === "cliente") return clientName(x.clientId) || "cliente";
+    if (x.mealWith === "fornecedor") return x.mealSupplier || "fornecedor";
+    if (x.mealWith === "colega") return x.mealColleague || "colega";
+    return "sozinho";
+  }
+  function fillMealNameSuggestions(kind){
+    var cfg = MEAL_NAME_FIELD[kind];
+    var seen = {}, names = [];
+    cfg.base.concat(Object.keys(expenses).map(function(id){ return expenses[id][cfg.key] || ""; })).forEach(function(n){
+      var k = String(n).trim().toLowerCase();
+      if (k && !seen[k]){ seen[k] = true; names.push(String(n).trim()); }
+    });
+    var list = document.getElementById("mealSupplierList");
+    list.innerHTML = "";
+    names.sort(function(a, b){ return a.localeCompare(b, "pt"); }).forEach(function(n){
+      var o = document.createElement("option"); o.value = n; list.appendChild(o);
+    });
+  }
+  function fillMealFields(x){
+    setSegValue("mealWithSeg", (x && x.mealWith) || "");
+    mealNameDraft = { fornecedor:(x && x.mealSupplier) || "", colega:(x && x.mealColleague) || "" };
+    mealNameShown = null;
+    ["mealWithError","mealSupplierError","expenseClientError"].forEach(function(id){ document.getElementById(id).hidden = true; });
+    updateMealFields();
+  }
+  function updateMealFields(){
+    var cat = document.getElementById("expenseCategorySeg").dataset.value;
+    var meal = isMealCategory(cat);
+    var withWhom = document.getElementById("mealWithSeg").dataset.value;
+    var input = document.getElementById("mealSupplier");
+    // Keep what was typed for the kind shown before, then show the chosen kind.
+    if (mealNameShown) mealNameDraft[mealNameShown] = input.value;
+    var nameKind = meal && MEAL_NAME_FIELD[withWhom] ? withWhom : null;
+    if (nameKind && nameKind !== mealNameShown){
+      var cfg = MEAL_NAME_FIELD[nameKind];
+      input.value = mealNameDraft[nameKind];
+      input.placeholder = cfg.placeholder;
+      document.getElementById("mealSupplierLabel").textContent = cfg.label;
+      document.getElementById("mealSupplierError").textContent = cfg.error;
+      document.getElementById("mealSupplierError").hidden = true;
+      fillMealNameSuggestions(nameKind);
+    }
+    mealNameShown = nameKind;
+    document.getElementById("mealFields").hidden = !meal;
+    document.getElementById("mealSupplierField").hidden = !nameKind;
+    // Client / restaurant only exist for meals.
+    document.getElementById("expenseClientSupplierRow").hidden = !meal;
+    // In meals the client field only shows (and is required) when eating with a client.
+    document.getElementById("expenseClientField").hidden = meal && withWhom !== "cliente";
+    document.getElementById("expenseClientOptional").hidden = meal && withWhom === "cliente";
+    document.getElementById("expenseSupplierLabel").textContent = meal ? "Restaurante" : "Fornecedor";
+    document.getElementById("expenseSupplier").placeholder = meal ? "Ex: Restaurante O Lavrador" : "Ex: Galp, Continente...";
+    if (withWhom) document.getElementById("mealWithError").hidden = true;
+  }
+  // Returns false (and shows the message) when the meal's company is missing.
+  function validateMealFields(){
+    var cat = document.getElementById("expenseCategorySeg").dataset.value;
+    if (!isMealCategory(cat)) return true;
+    var withWhom = document.getElementById("mealWithSeg").dataset.value;
+    if (!withWhom){
+      document.getElementById("mealWithError").hidden = false;
+      document.getElementById("mealWithSeg").scrollIntoView({ block:"center" });
+      return false;
+    }
+    if (withWhom === "cliente" && !document.getElementById("expenseClient").value){
+      document.getElementById("expenseClientError").hidden = false;
+      document.getElementById("expenseClient").focus();
+      return false;
+    }
+    if (MEAL_NAME_FIELD[withWhom] && !document.getElementById("mealSupplier").value.trim()){
+      document.getElementById("mealSupplierError").hidden = false;
+      document.getElementById("mealSupplier").focus();
+      return false;
+    }
+    return true;
+  }
+
+  // ---------- fuel (fleet card) fields in the expense window ----------
+  // Card number, name and product are remembered on this device for the next fill-in.
+  var FUEL_DEFAULTS_KEY = "qt_fuel_defaults";
+  function fuelDefaults(){
+    try { return JSON.parse(localStorage.getItem(FUEL_DEFAULTS_KEY) || "{}") || {}; } catch(e){ return {}; }
+  }
+  function fillFuelFields(x){
+    var f = (x && x.fuel) || {};
+    var d = x ? {} : fuelDefaults();
+    setSegValue("expensePaymentSeg", (x && x.payment) || "frota");
+    document.getElementById("fuelCard").value = f.card || d.card || "";
+    document.getElementById("fuelTime").value = f.time || "";
+    document.getElementById("fuelStation").value = f.station || "";
+    document.getElementById("fuelZone").value = f.zone || "";
+    document.getElementById("fuelName").value = f.name || d.name || "";
+    document.getElementById("fuelKms").value = f.kms != null ? String(f.kms) : "";
+    setFuelProduct(f.product || d.product || "Gasóleo");
+    document.getElementById("fuelLiters").value = f.liters != null ? String(f.liters).replace(".", ",") : "";
+    updateFuelFields();
+  }
+  function setFuelProduct(value){
+    var sel = document.getElementById("fuelProduct");
+    var exists = Array.prototype.some.call(sel.options, function(o){ return o.value === value; });
+    if (!exists){
+      var o = document.createElement("option");
+      o.value = value; o.textContent = value;
+      sel.appendChild(o);
+    }
+    sel.value = value;
+  }
+  function readFuelFields(){
+    function val(id){ return document.getElementById(id).value.trim(); }
+    var kms = parseInt(val("fuelKms").replace(/\D/g, ""), 10);
+    var liters = parseAmountInput(val("fuelLiters"));
+    var f = {
+      card: val("fuelCard"), time: val("fuelTime"), station: val("fuelStation"), zone: val("fuelZone"),
+      name: val("fuelName"), kms: isNaN(kms) ? null : kms, product: val("fuelProduct") || "Gasóleo",
+      liters: liters > 0 ? liters : null
+    };
+    try { localStorage.setItem(FUEL_DEFAULTS_KEY, JSON.stringify({ card:f.card, name:f.name, product:f.product })); } catch(e){}
+    return f;
+  }
+  function updateFuelFields(){
+    var isFuel = document.getElementById("expenseCategorySeg").dataset.value === "combustivel";
+    var fleet = document.getElementById("expensePaymentSeg").dataset.value === "frota";
+    document.getElementById("expenseFuelFields").hidden = !isFuel;
+    document.getElementById("expenseFleetFields").hidden = !fleet;
+    document.getElementById("expensePaymentHint").textContent = fleet
+      ? "Vai para o Excel Combustiveis do mês."
+      : "Vai para a coluna Gasóleo do mapa de Despesas.";
+  }
+
+  // ---------- automatic Excel files (only when opened through servidor_local.py) ----------
+  // From the templates in the "Despesas" folder the app writes:
+  //   "Despesas AAAA.xlsx"        — everything except fleet-card fuel, in the template's columns
+  //   "Combustiveis AAAA-MM.xlsx" — fleet-card fuel of that month
+  // A file is only rewritten when its expenses changed (fingerprint kept on this device).
+  var EXCEL_COLUMN = { viatura:"D", material:"E", combustivel:"F", almocos:"G", jantares:"H", refeicoes:"I", estadias:"J", parques:"L", portagens:"M", outros:"N" };
+  var excelWriterAvailable = null; // null = not checked yet
+  var excelSyncTimer = null, excelSyncRunning = false, excelSyncAgain = false;
+  var EXCEL_SIG_KEY = "qt_excel_sig";
+  var excelFilesSeen = {}; // output files confirmed to exist in the folder during this session
+
+  function isFleetFuel(x){ return expenseCategory(x) === "combustivel" && x.payment === "frota"; }
+
+  function setExcelStatus(text, isError, showRetry){
+    var s = document.getElementById("excelSyncStatus");
+    s.hidden = !text;
+    s.textContent = text || "";
+    s.classList.toggle("error", !!isError);
+    document.getElementById("excelSyncRetryBtn").hidden = !showRetry;
+  }
+
+  function checkExcelWriter(){
+    if (excelWriterAvailable !== null) return Promise.resolve(excelWriterAvailable);
+    if (!/^(127\.0\.0\.1|localhost)$/.test(location.hostname) || !window.QuadroExcel){
+      excelWriterAvailable = false;
+      return Promise.resolve(false);
+    }
+    return fetch("api/estado", { cache:"no-store" }).then(function(r){
+      return r.ok ? r.json() : null;
+    }).then(function(j){
+      excelWriterAvailable = !!(j && j.gravarExcel);
+      return excelWriterAvailable;
+    }).catch(function(){ excelWriterAvailable = false; return false; });
+  }
+
+  function scheduleExcelSync(){
+    clearTimeout(excelSyncTimer);
+    excelSyncTimer = setTimeout(function(){ runExcelSync(false); }, 1500);
+  }
+
+  // Groups expenses into the files they belong to: { "Despesas 2026.xlsx": {...}, "Combustiveis 2026-11.xlsx": {...} }
+  function excelOutputs(){
+    var out = {};
+    function sortKey(x){ return (x.date || "") + " " + ((x.fuel && x.fuel.time) || "") + " " + (x.createdAt || 0); }
+    var ids = Object.keys(expenses).sort(function(a, b){
+      var ka = sortKey(expenses[a]), kb = sortKey(expenses[b]);
+      return ka < kb ? -1 : (ka > kb ? 1 : 0);
+    });
+    ids.forEach(function(id){
+      var x = expenses[id];
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(x.date || "")) return;
+      var amount = Math.round((Number(x.amount) || 0) * 100) / 100;
+      if (isFleetFuel(x)){
+        var name = "Combustiveis " + x.date.slice(0, 7) + ".xlsx";
+        out[name] = out[name] || { kind:"combustiveis", rows:[] };
+        var f = x.fuel || {};
+        out[name].rows.push({
+          card:f.card || "", date:x.date, time:f.time || "", station:f.station || x.supplier || "", zone:f.zone || "",
+          name:f.name || "", kms:f.kms, price:amount > 0 ? amount : null, product:f.product || "Gasóleo", liters:f.liters
+        });
+      } else {
+        var year = x.date.slice(0, 4);
+        var dname = "Despesas " + year + ".xlsx";
+        out[dname] = out[dname] || { kind:"despesas", year:+year, items:[] };
+        var cat = expenseCategory(x);
+        var note = cat === "estadias" ? (x.supplier || x.description || "") : "";
+        // Comment on the day/category cell: the description, plus who the meal was with.
+        var companion = mealCompanion(x);
+        var commentParts = [];
+        if (x.description) commentParts.push(x.description);
+        if (companion) commentParts.push(companion === "sozinho" ? "Sozinho" : "Com " + companion);
+        if (isMealCategory(cat) && x.supplier) commentParts.push(x.supplier);
+        out[dname].items.push({ date:x.date, col:EXCEL_COLUMN[cat], amount:amount, note:note, comment:commentParts.join(" — ") });
+      }
+    });
+    return out;
+  }
+
+  function fetchTemplate(name){
+    return fetch("Despesas/" + encodeURIComponent(name), { cache:"no-store" }).then(function(r){
+      if (!r.ok) throw new Error("falta o modelo " + name + " na pasta Despesas");
+      return r.arrayBuffer();
+    });
+  }
+  function putExcel(name, bytes){
+    return fetch("Despesas/" + encodeURIComponent(name), {
+      method:"PUT", body:bytes,
+      headers:{ "Content-Type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
+    }).then(function(r){
+      if (r.ok) return;
+      return r.json().catch(function(){ return {}; }).then(function(j){
+        throw new Error(j.erro || ("erro " + r.status + " ao gravar " + name));
+      });
+    });
+  }
+
+  function runExcelSync(force){
+    if (excelSyncRunning){ excelSyncAgain = true; return Promise.resolve(); }
+    excelSyncRunning = true;
+    return checkExcelWriter().then(function(ok){
+      if (!ok) return;
+      var sigKey = EXCEL_SIG_KEY + ":" + STORAGE_KEY;
+      var sigs = {};
+      try { sigs = JSON.parse(localStorage.getItem(sigKey) || "{}") || {}; } catch(e){}
+      var outputs = excelOutputs();
+      // Files written before whose expenses were all deleted are rewritten empty.
+      Object.keys(sigs).forEach(function(name){
+        if (outputs[name]) return;
+        var m = /^Despesas (\d{4})\.xlsx$/.exec(name);
+        outputs[name] = m ? { kind:"despesas", year:+m[1], items:[] } : { kind:"combustiveis", rows:[] };
+      });
+      var templates = {};
+      function template(name){
+        if (!templates[name]) templates[name] = fetchTemplate(name);
+        return templates[name];
+      }
+      var written = [], errors = [];
+      var names = Object.keys(outputs).sort();
+      var chain = Promise.resolve();
+      names.forEach(function(name){
+        var o = outputs[name];
+        chain = chain.then(function(){
+          var tplName = o.kind === "despesas" ? "Despesas.xlsx" : "Combustiveis.xlsx";
+          var sig = JSON.stringify([tplName, o.items || o.rows]);
+          // Unchanged expenses: skip without downloading the template, unless the file was
+          // deleted from the folder (checked once per session, or when "Gravar Excel agora" is used).
+          var needed;
+          if (force || sigs[name] !== sig) needed = Promise.resolve(true);
+          else if (excelFilesSeen[name]) needed = Promise.resolve(false);
+          else needed = fetch("Despesas/" + encodeURIComponent(name), { method:"HEAD", cache:"no-store" })
+            .then(function(r){ if (r.ok) excelFilesSeen[name] = true; return !r.ok; })
+            .catch(function(){ return false; });
+          return needed.then(function(yes){
+            if (!yes) return;
+            return template(tplName).then(function(tpl){
+              return o.kind === "despesas"
+                ? window.QuadroExcel.buildDespesas(tpl, o.year, o.items)
+                : window.QuadroExcel.buildCombustiveis(tpl, o.rows);
+            }).then(function(bytes){ return putExcel(name, bytes); }).then(function(){
+              sigs[name] = sig;
+              excelFilesSeen[name] = true;
+              written.push(name);
+            });
+          }).catch(function(e){ errors.push(e && e.message ? e.message : String(e)); });
+        });
+      });
+      return chain.then(function(){
+        try { localStorage.setItem(sigKey, JSON.stringify(sigs)); } catch(e){}
+        var d = new Date(), at = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+        if (errors.length) setExcelStatus("Excel não atualizado: " + errors[0], true, true);
+        else if (written.length) setExcelStatus("Excel atualizado às " + at + ": " + written.join(", "), false, false);
+        else if (names.length) setExcelStatus("Excel em dia (pasta Despesas).", false, false);
+        else setExcelStatus("", false, false);
+      });
+    }).then(function(){
+      excelSyncRunning = false;
+      if (excelSyncAgain){ excelSyncAgain = false; return runExcelSync(false); }
+    }, function(e){
+      excelSyncRunning = false;
+      setExcelStatus("Excel não atualizado: " + (e && e.message ? e.message : e), true, true);
+    });
+  }
+
   // ---------- client ops ----------
   function addClient(name){
     var id = genId();
     clients[id] = { name:name.trim(), color:nextPaletteColor(), order:Date.now(), updatedAt:Date.now() };
     saveStore(); renderClientsList(); render();
+    return id;
   }
   function renameClient(id, name){
     if (!clients[id] || !name.trim()) return;
@@ -854,34 +1885,169 @@
   }
 
   // ---------- task modal ----------
-  function openTaskModal(id, presetStatus){
+  // preset (optional, for new tasks): { title, priority, due, clientId } — e.g. from the quick-add box.
+  function openTaskModal(id, presetStatus, preset){
     editingTaskId = id || null;
     var overlay = document.getElementById("taskModalOverlay");
     var title = document.getElementById("taskModalTitle");
     var deleteBtn = document.getElementById("deleteTaskBtn");
+    var focusId = "taskTitle";
     if (id && tasks[id]){
       var t = tasks[id];
       title.textContent = "Editar tarefa";
       document.getElementById("taskTitle").value = t.title;
-      populateClientSelect("taskClient", t.clientId);
+      populateTaskClientSelect(t.clientId);
+      populateTaskProjectSelect(t.projectId);
       setSegValue("prioritySeg", t.priority || "media");
       setSegValue("statusSeg", t.status || "todo");
       document.getElementById("taskDue").value = t.due || "";
       document.getElementById("taskNotes").value = t.notes || "";
+      pointsDraft = (t.points || []).map(function(p){ return { id:p.id, text:p.text, done:!!p.done }; });
       deleteBtn.hidden = false;
       resetConfirm(deleteBtn, "Eliminar");
     } else {
+      var p = preset || {};
       title.textContent = "Nova tarefa";
-      document.getElementById("taskTitle").value = "";
-      populateClientSelect("taskClient", activeClientFilter);
-      setSegValue("prioritySeg", "media");
+      document.getElementById("taskTitle").value = p.title || "";
+      populateTaskClientSelect(p.clientId || activeClientFilter);
+      populateTaskProjectSelect(null);
+      setSegValue("prioritySeg", p.priority || "media");
       setSegValue("statusSeg", presetStatus || "todo");
-      document.getElementById("taskDue").value = "";
+      document.getElementById("taskDue").value = p.due || "";
       document.getElementById("taskNotes").value = "";
+      pointsDraft = [];
       deleteBtn.hidden = true;
+      // Title already written in the quick box → go straight to the client, then the work points.
+      if (p.title) focusId = document.getElementById("taskClient").value ? "newPointInput" : "taskClient";
     }
+    document.getElementById("taskClientError").hidden = true;
+    document.getElementById("taskNewClientRow").hidden = true;
+    document.getElementById("newPointInput").value = "";
+    renderPointsDraft();
+    renderQuickPreview();
     overlay.hidden = false;
-    setTimeout(function(){ document.getElementById("taskTitle").focus(); }, 0);
+    setTimeout(function(){ document.getElementById(focusId).focus(); }, 0);
+  }
+
+  // Client list for the task window, with an option to create a client without leaving it.
+  function populateTaskClientSelect(selectedId){
+    populateClientSelect("taskClient", selectedId);
+    var sel = document.getElementById("taskClient");
+    sel.options[0].textContent = "— Escolher cliente —";
+    var newOpt = el("option", "", "+ Novo cliente…");
+    newOpt.value = "__new__";
+    sel.appendChild(newOpt);
+  }
+  // Existing projects: the chosen client's first, then the others; finished ones marked.
+  function populateTaskProjectSelect(selectedId){
+    var sel = document.getElementById("taskProject");
+    var clientId = document.getElementById("taskClient").value;
+    sel.innerHTML = "";
+    var none = el("option", "", "Sem projeto");
+    none.value = "";
+    sel.appendChild(none);
+    var ids = Object.keys(projects).sort(function(a, b){
+      var sa = PROJECT_STATUS_ORDER[projects[a].status] || 0, sb = PROJECT_STATUS_ORDER[projects[b].status] || 0;
+      if (sa !== sb) return sa - sb;
+      return String(projects[a].name).localeCompare(String(projects[b].name), "pt");
+    });
+    function option(pid){
+      var p = projects[pid];
+      var label = p.name;
+      if (p.clientId !== clientId && clientName(p.clientId)) label += " — " + clientName(p.clientId);
+      if (p.status === "concluido") label += " (concluído)";
+      var o = el("option", "");
+      o.textContent = label;
+      o.value = pid;
+      return o;
+    }
+    var mine = clientId && clients[clientId] ? ids.filter(function(pid){ return projects[pid].clientId === clientId; }) : [];
+    var others = ids.filter(function(pid){ return mine.indexOf(pid) < 0; });
+    if (mine.length){
+      var g1 = document.createElement("optgroup");
+      g1.label = "Projetos de " + clientName(clientId);
+      mine.forEach(function(pid){ g1.appendChild(option(pid)); });
+      sel.appendChild(g1);
+    }
+    if (others.length){
+      var g2 = document.createElement("optgroup");
+      g2.label = mine.length ? "Outros projetos" : "Projetos";
+      others.forEach(function(pid){ g2.appendChild(option(pid)); });
+      sel.appendChild(g2);
+    }
+    if (!ids.length) none.textContent = "Sem projetos criados";
+    sel.value = selectedId && projects[selectedId] ? selectedId : "";
+  }
+  // Choosing a project of a client while the task has no client yet fills in that client.
+  function onTaskProjectChange(){
+    var pid = document.getElementById("taskProject").value;
+    var clientSel = document.getElementById("taskClient");
+    var p = pid && projects[pid];
+    if (p && p.clientId && clients[p.clientId] && (!clientSel.value || clientSel.value === "__new__")){
+      clientSel.value = p.clientId;
+      document.getElementById("taskClientError").hidden = true;
+      document.getElementById("taskNewClientRow").hidden = true;
+      populateTaskProjectSelect(pid);
+    }
+  }
+
+  function onTaskClientChange(){
+    var sel = document.getElementById("taskClient");
+    var row = document.getElementById("taskNewClientRow");
+    document.getElementById("taskClientError").hidden = true;
+    if (sel.value !== "__new__") populateTaskProjectSelect(document.getElementById("taskProject").value);
+    if (sel.value === "__new__"){
+      row.hidden = false;
+      document.getElementById("taskNewClientName").focus();
+    } else {
+      row.hidden = true;
+    }
+  }
+  function createClientFromTaskModal(){
+    var input = document.getElementById("taskNewClientName");
+    var name = input.value.trim();
+    if (!name){ input.focus(); return; }
+    var id = addClient(name);
+    populateTaskClientSelect(id);
+    populateTaskProjectSelect(document.getElementById("taskProject").value);
+    input.value = "";
+    document.getElementById("taskNewClientRow").hidden = true;
+    document.getElementById("newPointInput").focus();
+  }
+
+  // ---------- work points (checklist inside a task) ----------
+  var pointsDraft = [];
+  function renderPointsDraft(){
+    var list = document.getElementById("taskPointsList");
+    list.innerHTML = "";
+    if (pointsDraft.length === 0){ list.appendChild(el("div", "hint", "Sem pontos de trabalho. Escreve abaixo e carrega Enter.")); return; }
+    pointsDraft.forEach(function(item){
+      var row = el("div", "action-item");
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = !!item.done;
+      cb.setAttribute("aria-label", "Ponto feito");
+      cb.addEventListener("change", function(){ item.done = cb.checked; renderPointsDraft(); });
+      row.appendChild(cb);
+      var text = el("span", "action-text" + (item.done ? " done" : ""));
+      text.textContent = item.text;
+      row.appendChild(text);
+      var rm = el("button", "icon-btn", "×");
+      rm.type = "button"; rm.title = "Remover ponto";
+      rm.addEventListener("click", function(){
+        pointsDraft = pointsDraft.filter(function(a){ return a.id !== item.id; });
+        renderPointsDraft();
+      });
+      row.appendChild(rm);
+      list.appendChild(row);
+    });
+    list.scrollTop = list.scrollHeight;
+  }
+  function addPointDraft(){
+    var input = document.getElementById("newPointInput");
+    if (!input.value.trim()) return;
+    pointsDraft.push({ id:genId(), text:input.value.trim(), done:false });
+    input.value = "";
+    renderPointsDraft();
   }
   function closeTaskModal(){ document.getElementById("taskModalOverlay").hidden = true; editingTaskId = null; }
 
@@ -1021,23 +2187,28 @@
       title.textContent = "Editar despesa";
       document.getElementById("expenseDate").value = x.date || todayStr();
       document.getElementById("expenseAmount").value = (Number(x.amount)||0).toFixed(2).replace(".", ",");
-      setSegValue("expenseCategorySeg", x.category || "deslocacoes");
+      setSegValue("expenseCategorySeg", expenseCategory(x));
       populateClientSelect("expenseClient", x.clientId);
       document.getElementById("expenseSupplier").value = x.supplier || "";
       document.getElementById("expenseDescription").value = x.description || "";
+      fillFuelFields(x);
+      fillMealFields(x);
       deleteBtn.hidden = false;
       resetConfirm(deleteBtn, "Eliminar");
     } else {
       title.textContent = "Nova despesa";
       document.getElementById("expenseDate").value = presetDate || todayStr();
       document.getElementById("expenseAmount").value = "";
-      setSegValue("expenseCategorySeg", "deslocacoes");
+      setSegValue("expenseCategorySeg", "outros");
       populateClientSelect("expenseClient", activeClientFilter);
       document.getElementById("expenseSupplier").value = "";
       document.getElementById("expenseDescription").value = "";
+      fillFuelFields(null);
+      fillMealFields(null);
       deleteBtn.hidden = true;
     }
     setReceiptScanStatus("A foto sugere os campos; confirma ou edita antes de guardar.", false);
+    document.getElementById("expenseAmountError").hidden = true;
     overlay.hidden = false;
     setTimeout(function(){ document.getElementById("expenseAmount").focus(); }, 0);
   }
@@ -1153,6 +2324,7 @@
     var labels = { tasks:"+ Nova tarefa", meetings:"+ Nova reunião", projects:"+ Novo projeto", expenses:"+ Nova despesa" };
     document.getElementById("newItemBtn").textContent = labels[view] || "+ Novo";
     render();
+    if (view === "home") loadFolderData(); // pick up changes made to the Excel files
   }
 
   // ---------- wiring ----------
@@ -1167,6 +2339,46 @@
       else if (currentView === "projects") openProjectModal(null);
       else openExpenseModal(null);
     });
+    document.getElementById("taskQuickAddBtn").addEventListener("click", openNewTaskFromList);
+    var titleInput = document.getElementById("taskTitle");
+    titleInput.addEventListener("input", renderQuickPreview);
+    titleInput.addEventListener("blur", applyTitleShortcuts);
+    titleInput.addEventListener("keydown", function(e){
+      // Enter in the title of a new task: apply the shortcuts and move on to the client.
+      if (e.key === "Enter" && !editingTaskId){
+        e.preventDefault();
+        applyTitleShortcuts();
+        document.getElementById(document.getElementById("taskClient").value ? "newPointInput" : "taskClient").focus();
+      }
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("#taskGroupingSeg button"), function(b){
+      b.addEventListener("click", function(){
+        taskGrouping = b.dataset.val;
+        saveTaskViewPrefs();
+        renderBoard();
+      });
+    });
+    document.getElementById("taskShowDone").addEventListener("change", function(){
+      showDoneByClient = this.checked;
+      saveTaskViewPrefs();
+      renderBoard();
+    });
+
+    document.getElementById("taskClient").addEventListener("change", onTaskClientChange);
+    document.getElementById("taskProject").addEventListener("change", onTaskProjectChange);
+    document.getElementById("taskNewClientAddBtn").addEventListener("click", createClientFromTaskModal);
+    document.getElementById("taskNewClientName").addEventListener("keydown", function(e){
+      if (e.key === "Enter"){ e.preventDefault(); createClientFromTaskModal(); }
+    });
+    document.getElementById("addPointBtn").addEventListener("click", function(){
+      addPointDraft();
+      document.getElementById("newPointInput").focus();
+    });
+    document.getElementById("newPointInput").addEventListener("keydown", function(e){
+      if (e.key === "Enter"){ e.preventDefault(); addPointDraft(); }
+    });
+    document.getElementById("homePrevMonthBtn").addEventListener("click", function(){ shiftHomeMonth(-1); });
+    document.getElementById("homeNextMonthBtn").addEventListener("click", function(){ shiftHomeMonth(1); });
     document.getElementById("addMeetingBottomBtn").addEventListener("click", function(){ openMeetingModal(null); });
     document.getElementById("addProjectBottomBtn").addEventListener("click", function(){ openProjectModal(null); });
     document.getElementById("addExpenseBottomBtn").addEventListener("click", function(){ openExpenseModal(null); });
@@ -1237,11 +2449,26 @@
     });
     document.getElementById("expenseModalOverlay").addEventListener("click", function(e){ if (e.target === this) closeExpenseModal(); });
 
-    ["prioritySeg","statusSeg","projectStatusSeg","expenseCategorySeg"].forEach(function(segId){
+    ["prioritySeg","statusSeg","projectStatusSeg","expenseCategorySeg","expensePaymentSeg","mealWithSeg"].forEach(function(segId){
       document.getElementById(segId).addEventListener("click", function(e){
         var btn = e.target.closest("button");
-        if (btn) setSegValue(segId, btn.dataset.val);
+        if (!btn) return;
+        setSegValue(segId, btn.dataset.val);
+        if (segId === "expenseCategorySeg" || segId === "expensePaymentSeg" || segId === "mealWithSeg"){
+          updateFuelFields();
+          updateMealFields();
+        }
       });
+    });
+    document.getElementById("excelSyncRetryBtn").addEventListener("click", function(){ runExcelSync(true); });
+    document.getElementById("expenseAmount").addEventListener("input", function(){
+      document.getElementById("expenseAmountError").hidden = true;
+    });
+    document.getElementById("expenseClient").addEventListener("change", function(){
+      document.getElementById("expenseClientError").hidden = true;
+    });
+    document.getElementById("mealSupplier").addEventListener("input", function(){
+      document.getElementById("mealSupplierError").hidden = true;
     });
 
     document.getElementById("manageClientsBtn").addEventListener("click", openClientsModal);
@@ -1316,12 +2543,17 @@
   function main(){
     try { loadStore(); }
     catch(e){ console.error("loadStore falhou", e); showFatalError("carregar dados", e); }
+    forgetStoredSalesCopy();
 
     try { wireStaticUI(); }
     catch(e){ console.error("wireStaticUI falhou", e); showFatalError("ligar botões", e); }
 
     try { render(); }
     catch(e){ console.error("render falhou", e); showFatalError("mostrar conteúdo", e); }
+
+    try { loadFolderData(); }
+    catch(e){ console.error("loadFolderData falhou", e); }
+    scheduleExcelSync();
 
     registerServiceWorker();
   }

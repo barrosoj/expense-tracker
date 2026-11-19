@@ -8,3 +8,11 @@ node_modules/
 # personal data backups exported from the app
 quadro-tarefas-copia-*.json
 despesas-*.csv
+# Ficheiros locais de vendas/compras: nunca enviar para o GitHub
+Compras/
+Despesas/
+Vendas/
+*.csv
+*.xlsx
+*.xls
+~$*

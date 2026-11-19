@@ -10,8 +10,10 @@
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Quadro Tarefas" />
-<meta name="theme-color" content="#2F6659" />
+<meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#0B0D12" media="(prefers-color-scheme: dark)" />
 <link rel="apple-touch-icon" href="icon.png" />
+<link rel="icon" type="image/svg+xml" href="brand/logo-simbolo.svg" />
 <link rel="icon" type="image/png" href="icon.png" />
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="stylesheet" href="styles.css" />
@@ -20,7 +22,7 @@
 
 <div class="auth-screen" id="authScreen" hidden>
   <div class="auth-card">
-    <img src="icon.png" alt="" class="auth-logo" width="56" height="56" />
+    <img src="brand/logo-simbolo.svg" alt="" class="auth-logo" width="56" height="56" />
     <h1>Quadro de Tarefas</h1>
     <p class="subtitle">Entra para sincronizar os teus dados entre dispositivos.</p>
 
@@ -61,8 +63,10 @@
     <span>Ocorreu um erro ao iniciar a aplicação neste navegador.</span>
     <button type="button" id="dismissFatalError">Fechar</button>
   </div>
+  <div class="appbar">
   <header class="topbar">
     <div class="topbar-main">
+      <img src="brand/logo-simbolo.svg" alt="" class="brand-mark" width="28" height="28" />
       <h1>Quadro de Tarefas</h1>
       <p class="subtitle">Funciona offline — guarda neste dispositivo e sincroniza com a nuvem quando estás online.</p>
     </div>
@@ -70,7 +74,7 @@
       <button class="btn btn-primary" id="newItemBtn">+ Nova tarefa</button>
       <button class="btn btn-ghost" id="manageClientsBtn">Gerir clientes</button>
       <details class="utility-menu" id="utilityMenu">
-        <summary class="btn btn-ghost utility-menu-toggle" aria-label="Abrir menu de opções">☰ Opções</summary>
+        <summary class="btn btn-ghost utility-menu-toggle" aria-label="Abrir menu de opções"><svg class="btn-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span>Opções</span></summary>
         <div class="utility-menu-panel">
           <button type="button" class="btn btn-ghost btn-sm" id="exportBtn">Exportar cópia</button>
           <button type="button" class="btn btn-ghost btn-sm" id="importBtn">Importar cópia</button>
@@ -86,11 +90,13 @@
   </header>
 
   <nav class="view-tabs" id="viewTabs" aria-label="Secções principais">
-    <button type="button" data-view="tasks" class="active" aria-current="page">Tarefas</button>
-    <button type="button" data-view="meetings">Reuniões</button>
-    <button type="button" data-view="projects">Projetos</button>
-    <button type="button" data-view="expenses">Despesas</button>
+    <button type="button" data-view="home" class="active" aria-current="page"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9v12h13V9"/><path d="M10 21v-6h4v6"/></svg><span>Início</span></button>
+    <button type="button" data-view="tasks"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="3.5"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg><span>Tarefas</span></button>
+    <button type="button" data-view="meetings"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg><span>Reuniões</span></button>
+    <button type="button" data-view="projects"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 7A2.5 2.5 0 0 1 6 4.5h3.2l2 2.5H18A2.5 2.5 0 0 1 20.5 9.5V17a2.5 2.5 0 0 1-2.5 2.5H6A2.5 2.5 0 0 1 3.5 17z"/></svg><span>Projetos</span></button>
+    <button type="button" data-view="expenses"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-2.5-1.6L13 21l-2.5-1.6L8 21l-2-1.3z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg><span>Despesas</span></button>
   </nav>
+  </div>
 
   <div class="banner warn" id="storageWarning" hidden>
     <span>A aplicação guarda uma cópia neste dispositivo e sincroniza quando há ligação. Exporta cópias de segurança regularmente.</span>
@@ -104,7 +110,64 @@
 
   <div class="filters" id="filters"></div>
 
-  <main class="board" id="board"></main>
+  <section class="home-view" id="homeView" hidden>
+    <div class="home-toolbar">
+      <div class="month-nav">
+        <button type="button" class="icon-btn" id="homePrevMonthBtn" title="Mês anterior">‹</button>
+        <div class="month-nav-label mono" id="homeMonthLabel"></div>
+        <button type="button" class="icon-btn" id="homeNextMonthBtn" title="Mês seguinte">›</button>
+      </div>
+    </div>
+
+    <div class="home-cards">
+      <article class="home-card home-card-sale">
+        <span class="home-card-label">Valor de venda atual</span>
+        <strong class="home-card-value mono" id="homeSaleValue">—</strong>
+        <span class="home-card-hint" id="homeSaleHint"></span>
+      </article>
+      <article class="home-card home-card-purchase">
+        <span class="home-card-label">Valor de compra total</span>
+        <strong class="home-card-value mono" id="homePurchaseValue">—</strong>
+        <span class="home-card-hint" id="homePurchaseHint"></span>
+      </article>
+    </div>
+
+    <section class="home-brands">
+      <h2 class="home-brands-title">Compras por marca</h2>
+      <ul class="home-brand-list" id="homeBrandList"></ul>
+    </section>
+
+    <div class="home-files" id="homeFilesStatus" hidden>
+      <div class="home-import">
+        <span class="home-import-label">Vendas</span>
+        <span class="home-import-status" id="homeSaleStatus" role="status" aria-live="polite">A procurar ficheiro…</span>
+      </div>
+      <div class="home-import">
+        <span class="home-import-label">Compras</span>
+        <span class="home-import-status" id="homePurchaseStatus" role="status" aria-live="polite">A procurar ficheiro…</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="task-quickadd" id="taskQuickAdd" hidden>
+    <button type="button" class="task-quickadd-trigger" id="taskQuickAddBtn">
+      <span class="task-quickadd-plus" aria-hidden="true">+</span>
+      <span>Nova tarefa… clica para dar nome</span>
+    </button>
+    <div class="task-toolbar">
+      <span class="task-toolbar-label">Organizar por</span>
+      <div class="segmented task-grouping" id="taskGroupingSeg" role="group" aria-label="Organizar tarefas por">
+        <button type="button" data-val="status">Estado</button>
+        <button type="button" data-val="client">Cliente</button>
+      </div>
+      <label class="task-toolbar-check" hidden>
+        <input type="checkbox" id="taskShowDone" />
+        Mostrar concluídas
+      </label>
+    </div>
+  </div>
+
+  <main class="board" id="board" hidden></main>
 
   <div class="meetings-view" id="meetingsView" hidden>
     <div class="meetings-list" id="meetingsList"></div>
@@ -125,6 +188,8 @@
       </div>
       <button type="button" class="btn btn-ghost btn-sm" id="exportExpensesBtn">Exportar CSV</button>
       <span class="expenses-export-status" id="expensesExportStatus"></span>
+      <span class="excel-sync-status" id="excelSyncStatus" role="status" aria-live="polite" hidden></span>
+      <button type="button" class="btn btn-ghost btn-sm" id="excelSyncRetryBtn" hidden>Gravar Excel agora</button>
     </div>
     <div class="expenses-table-wrap">
       <table class="expenses-table" id="expensesTable"></table>
@@ -139,12 +204,32 @@
 
     <div class="field">
       <label for="taskTitle">Título</label>
-      <input type="text" id="taskTitle" maxlength="140" placeholder="Ex: Enviar proposta atualizada" />
+      <input type="text" id="taskTitle" maxlength="140" autocomplete="off" placeholder="Ex: Ligar ao João amanhã !alta" aria-describedby="taskQuickPreview" />
+      <div class="task-quickadd-preview" id="taskQuickPreview"></div>
     </div>
 
     <div class="field">
       <label for="taskClient">Cliente</label>
       <select id="taskClient"></select>
+      <div class="actions-add" id="taskNewClientRow" hidden>
+        <input type="text" id="taskNewClientName" maxlength="60" placeholder="Nome do novo cliente e Enter..." />
+        <button type="button" class="btn btn-ghost btn-sm" id="taskNewClientAddBtn">Criar</button>
+      </div>
+      <p class="field-error" id="taskClientError" hidden>Escolhe o cliente desta tarefa.</p>
+    </div>
+
+    <div class="field">
+      <label for="taskProject">Projeto <span class="hint-inline">— opcional</span></label>
+      <select id="taskProject"></select>
+    </div>
+
+    <div class="field">
+      <label for="newPointInput">Pontos de trabalho</label>
+      <div class="actions-list" id="taskPointsList"></div>
+      <div class="actions-add">
+        <input type="text" id="newPointInput" maxlength="200" placeholder="Adicionar ponto e Enter..." />
+        <button type="button" class="btn btn-ghost btn-sm" id="addPointBtn">Adicionar</button>
+      </div>
     </div>
 
     <div class="field-row">
@@ -300,7 +385,8 @@
       </div>
       <div class="field">
         <label for="expenseAmount">Valor (€)</label>
-        <input type="text" id="expenseAmount" inputmode="decimal" placeholder="0,00" />
+        <input type="text" id="expenseAmount" inputmode="decimal" placeholder="0,00" aria-describedby="expenseAmountError" />
+        <p class="field-error" id="expenseAmountError" hidden>Indica o valor pago.</p>
       </div>
     </div>
 
@@ -312,21 +398,107 @@
 
     <div class="field">
       <label>Categoria</label>
-      <div class="segmented" id="expenseCategorySeg" data-value="deslocacoes">
-        <button type="button" data-val="deslocacoes">Deslocações</button>
-        <button type="button" data-val="refeicoes">Refeições</button>
-        <button type="button" data-val="alojamento">Alojamento</button>
-        <button type="button" data-val="material">Material</button>
+      <div class="segmented segmented-wrap" id="expenseCategorySeg" data-value="outros">
+        <button type="button" data-val="combustivel">Combustível</button>
+        <button type="button" data-val="almocos">Almoços</button>
+        <button type="button" data-val="jantares">Jantares</button>
+        <button type="button" data-val="refeicoes">Refeições gerais</button>
+        <button type="button" data-val="estadias">Estadias</button>
+        <button type="button" data-val="portagens">Portagens</button>
+        <button type="button" data-val="parques">Parques</button>
+        <button type="button" data-val="viatura">Viatura</button>
+        <button type="button" data-val="material">Material escritório</button>
+        <button type="button" data-val="outros">Outros</button>
       </div>
     </div>
 
-    <div class="field-row">
+    <div class="fuel-fields" id="expenseFuelFields" hidden>
       <div class="field">
-        <label for="expenseClient">Cliente <span class="hint-inline">— opcional</span></label>
+        <label>Pagamento</label>
+        <div class="segmented" id="expensePaymentSeg" data-value="frota">
+          <button type="button" data-val="frota">Cartão frota</button>
+          <button type="button" data-val="pessoal">Pago por mim</button>
+        </div>
+        <p class="hint" id="expensePaymentHint"></p>
+      </div>
+      <div id="expenseFleetFields">
+        <div class="field-row">
+          <div class="field">
+            <label for="fuelCard">Nº cartão</label>
+            <input type="text" id="fuelCard" maxlength="30" inputmode="numeric" autocomplete="off" />
+          </div>
+          <div class="field">
+            <label for="fuelTime">Hora</label>
+            <input type="time" id="fuelTime" />
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="fuelStation">Posto</label>
+            <input type="text" id="fuelStation" maxlength="60" placeholder="Ex: PRIO Fernão Ferro" />
+          </div>
+          <div class="field">
+            <label for="fuelZone">Zona</label>
+            <input type="text" id="fuelZone" maxlength="60" placeholder="Ex: Fernão Ferro" />
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="fuelName">Nome</label>
+            <input type="text" id="fuelName" maxlength="20" placeholder="Ex: RB" />
+          </div>
+          <div class="field">
+            <label for="fuelKms">Kms</label>
+            <input type="text" id="fuelKms" inputmode="numeric" maxlength="9" placeholder="Ex: 149378" />
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label for="fuelProduct">Produto</label>
+            <select id="fuelProduct">
+              <option value="Gasóleo">Gasóleo</option>
+              <option value="Gasóleo aditivado">Gasóleo aditivado</option>
+              <option value="Gasolina 95">Gasolina 95</option>
+              <option value="Gasolina 95 aditivada">Gasolina 95 aditivada</option>
+              <option value="Gasolina 98">Gasolina 98</option>
+              <option value="GPL Auto">GPL Auto</option>
+              <option value="AdBlue">AdBlue</option>
+              <option value="Carregamento elétrico">Carregamento elétrico</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="fuelLiters">Quantidade (L)</label>
+            <input type="text" id="fuelLiters" inputmode="decimal" maxlength="8" placeholder="0,00" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="field" id="mealFields" hidden>
+      <label>Com quem</label>
+      <div class="segmented" id="mealWithSeg" data-value="">
+        <button type="button" data-val="sozinho">Sozinho</button>
+        <button type="button" data-val="cliente">Cliente</button>
+        <button type="button" data-val="fornecedor">Fornecedor</button>
+        <button type="button" data-val="colega">Colega</button>
+      </div>
+      <p class="field-error" id="mealWithError" hidden>Escolhe com quem foi a refeição.</p>
+      <div class="meal-supplier" id="mealSupplierField" hidden>
+        <label for="mealSupplier" id="mealSupplierLabel">Qual fornecedor</label>
+        <input type="text" id="mealSupplier" maxlength="80" list="mealSupplierList" autocomplete="off" placeholder="Ex: Kennametal" />
+        <datalist id="mealSupplierList"></datalist>
+        <p class="field-error" id="mealSupplierError" hidden>Indica o fornecedor.</p>
+      </div>
+    </div>
+
+    <div class="field-row" id="expenseClientSupplierRow">
+      <div class="field" id="expenseClientField">
+        <label for="expenseClient">Cliente <span class="hint-inline" id="expenseClientOptional">— opcional</span></label>
         <select id="expenseClient"></select>
+        <p class="field-error" id="expenseClientError" hidden>Escolhe o cliente.</p>
       </div>
       <div class="field">
-        <label for="expenseSupplier">Fornecedor <span class="hint-inline">— opcional</span></label>
+        <label for="expenseSupplier"><span id="expenseSupplierLabel">Fornecedor</span> <span class="hint-inline">— opcional</span></label>
         <input type="text" id="expenseSupplier" maxlength="80" placeholder="Ex: Galp, Continente..." />
       </div>
     </div>
@@ -380,6 +552,8 @@
 <script src="vendor/supabase.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" integrity="sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F" crossorigin="anonymous"></script>
 <script src="receipt.js"></script>
+<script src="xlsx-reader.js"></script>
+<script src="excel-writer.js"></script>
 <script src="app.js"></script>
 <script src="sync.js"></script>
 <script src="auth.js"></script>
