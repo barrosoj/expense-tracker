@@ -494,6 +494,8 @@
   // (they are git-ignored, so never on GitHub). The app only reads them; it never changes or sends them.
   // They are found only when the app is opened from this computer (local server on the project folder).
   var DATA_FOLDERS = { compra:["Compras","Compra"], venda:["Vendas","Venda"] };
+  var FOLDER_DATA_LOCAL = /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname);
+  var NOT_LOCAL_HINT = "Disponível só no computador (lido das pastas locais)";
   var KIND_LABEL = { compra:"compras", venda:"vendas" };
   var folderLoad = null;
 
@@ -577,6 +579,9 @@
 
   // Re-reads both folders (on start and every time "Início" is opened), so edits to the Excel files show up.
   function loadFolderData(){
+    // The Compras/Vendas folders only exist on the PC (local server); elsewhere (phone, GitHub
+    // Pages) there is nothing to read, so skip the lookups instead of logging 404 errors.
+    if (!FOLDER_DATA_LOCAL) return Promise.resolve();
     if (folderLoad) return folderLoad;
     salesData = {};
     mySales = {};
@@ -608,7 +613,7 @@
     document.getElementById("homeSaleValue").textContent = hasSale ? formatCurrency(sale) : "—";
     document.getElementById("homeSaleHint").textContent = hasSale
       ? "As minhas vendas em " + monthLabel(homeMonth)
-      : "Sem valor de venda para este mês";
+      : (FOLDER_DATA_LOCAL ? "Sem valor de venda para este mês" : NOT_LOCAL_HINT);
 
     var rows = brands.map(function(b){
       var entry = monthData[findBrandKey(monthData, b)];
@@ -624,7 +629,7 @@
     document.getElementById("homePurchaseValue").textContent = brandsWithBuy ? formatCurrency(totalBuy) : "—";
     document.getElementById("homePurchaseHint").textContent = brandsWithBuy
       ? "Soma de " + brandsWithBuy + " marca(s) em " + monthLabel(homeMonth)
-      : "Sem valores de compra para este mês";
+      : (FOLDER_DATA_LOCAL ? "Sem valores de compra para este mês" : NOT_LOCAL_HINT);
 
     // Brands with a value first (largest first), then the ones without a value.
     rows.sort(function(a, b){
@@ -635,6 +640,8 @@
     });
     var list = document.getElementById("homeBrandList");
     list.innerHTML = "";
+    // Per-brand purchases come only from the PC's Compras folder: hide the empty card elsewhere.
+    list.parentNode.hidden = !FOLDER_DATA_LOCAL;
     rows.forEach(function(r){
       var li = el("li", "home-brand-row" + (r.compra === null ? " is-empty" : ""));
       var name = el("span", "home-brand-name");
@@ -1502,6 +1509,7 @@
 
     var table = document.getElementById("expensesTable");
     var days = Object.keys(byDay).sort();
+    renderExpenseDayCards(days, byDay);
 
     if (days.length === 0){
       table.innerHTML = "";
@@ -1539,6 +1547,42 @@
 
     Array.prototype.forEach.call(table.querySelectorAll("tbody tr"), function(tr){
       tr.addEventListener("click", function(){ openDayExpensesModal(tr.dataset.date); });
+    });
+  }
+
+  // Phone layout of the month: one card per day (most recent first) listing only the categories
+  // with a value, plus the month total. Tapping a day opens that day's expenses.
+  function renderExpenseDayCards(days, byDay){
+    var box = document.getElementById("expenseDayCards");
+    box.innerHTML = "";
+    if (!days.length){
+      box.appendChild(el("div", "expenses-table-empty", "Sem despesas registadas em " + monthLabel(currentMonth) + "."));
+      return;
+    }
+    var monthTotal = 0;
+    days.forEach(function(d){ monthTotal += byDay[d].total; });
+    var head = el("div", "expense-month-total");
+    head.appendChild(el("span", "", "Total de " + escapeHtml(monthLabel(currentMonth))));
+    head.appendChild(el("strong", "mono", formatCurrency(monthTotal)));
+    box.appendChild(head);
+    days.slice().reverse().forEach(function(d){
+      var row = byDay[d];
+      var card = el("button", "expense-day-card");
+      card.type = "button";
+      var top = el("div", "expense-day-card-head");
+      top.appendChild(el("span", "expense-day-card-date", escapeHtml(formatDateShort(d))));
+      top.appendChild(el("span", "expense-day-card-total mono", formatCurrency(row.total)));
+      card.appendChild(top);
+      var cats = el("div", "expense-day-card-cats");
+      EXPENSE_CATEGORIES.forEach(function(c){
+        if (!(row[c] > 0)) return;
+        var chip = el("span", "expense-cat-badge expense-cat-" + c);
+        chip.textContent = EXPENSE_CATEGORY_LABEL[c] + " " + formatCurrency(row[c]);
+        cats.appendChild(chip);
+      });
+      card.appendChild(cats);
+      card.addEventListener("click", function(){ openDayExpensesModal(d); });
+      box.appendChild(card);
     });
   }
 

@@ -393,6 +393,17 @@ table.expenses-table{ width:100%; min-width:600px; border-collapse:collapse; fon
 .expenses-table tfoot td, .expenses-table tfoot th{ font-weight:600; border-top:1px solid var(--border-strong); border-bottom:none; background:var(--surface-2); }
 .expenses-table-empty{ padding:32px 12px; text-align:center; color:var(--text-faint); font-size:13px; }
 
+/* Phone version of the month table (shown only at phone width, see the 480px block). */
+.expense-day-cards{ display:none; flex-direction:column; gap:10px; }
+.expense-month-total{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:2px 4px; color:var(--text-muted); font-size:13px; }
+.expense-month-total strong{ font-size:18px; color:var(--text); }
+.expense-day-card{ display:flex; flex-direction:column; gap:10px; width:100%; padding:14px 16px; text-align:left; font:inherit; color:inherit; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-l); box-shadow:var(--shadow); cursor:pointer; }
+.expense-day-card-head{ display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+.expense-day-card-date{ font-weight:600; }
+.expense-day-card-total{ font-weight:600; }
+.expense-day-card-cats{ display:flex; flex-wrap:wrap; gap:6px; }
+.expense-day-card-cats .expense-cat-badge{ min-width:0; }
+
 .day-expenses-list{ display:flex; flex-direction:column; max-height:300px; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius-m); }
 .day-expenses-list > .hint{ padding:14px; }
 .day-expense-item{ display:flex; align-items:center; gap:10px; background:var(--surface); border-top:1px solid var(--border); padding:10px 12px; cursor:pointer; transition:background .12s ease; }
@@ -542,7 +553,12 @@ table.expenses-table{ width:100%; min-width:600px; border-collapse:collapse; fon
 
 /* Phones: compact header, bottom tab bar with icons. */
 @media (max-width:480px){
-  .app{ padding-bottom:calc(84px + env(safe-area-inset-bottom)); }
+  /* Room for the bottom tab bar plus the floating "+ Nova …" button, so neither covers the last item. */
+  .app{ padding-bottom:calc(150px + env(safe-area-inset-bottom)); }
+  /* The floating button already does this; the in-page duplicates would sit right under it. */
+  #addMeetingBottomBtn, #addProjectBottomBtn, #addExpenseBottomBtn{ display:none; }
+  .expenses-table-wrap{ display:none; }
+  .expense-day-cards{ display:flex; }
   /* No blur here: a blurred ancestor would pin the fixed bottom tab bar to the header instead. */
   .appbar{ padding-bottom:10px; background:var(--surface); -webkit-backdrop-filter:none; backdrop-filter:none; }
   .topbar{ gap:10px; }
