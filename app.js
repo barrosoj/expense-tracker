@@ -595,6 +595,7 @@
   }
 
   function renderHome(){
+    try { renderClientMap(); } catch(e){ console.error("mapa falhou", e); }
     if (!homeMonth) homeMonth = todayStr().slice(0,7);
     var brands = brandList();
 
@@ -653,16 +654,18 @@
 
   function render(){
     var isHome = currentView === "home";
-    document.getElementById("filters").hidden = isHome;
+    var isClients = currentView === "clients";
+    document.getElementById("filters").hidden = isHome || isClients;
     document.getElementById("homeView").hidden = !isHome;
+    document.getElementById("clientsView").hidden = !isClients;
     document.getElementById("newItemBtn").hidden = isHome;
-    if (isHome){
+    if (isHome || isClients){
       document.getElementById("taskQuickAdd").hidden = true;
       document.getElementById("board").hidden = true;
       document.getElementById("meetingsView").hidden = true;
       document.getElementById("projectsView").hidden = true;
       document.getElementById("expensesView").hidden = true;
-      renderHome();
+      if (isHome) renderHome(); else renderClientsList();
       return;
     }
     renderFilters();
@@ -704,9 +707,6 @@
       wrap.appendChild(chip);
     });
 
-    var manageBtn = el("button", "chip chip-manage", "Gerir clientes");
-    manageBtn.addEventListener("click", openClientsModal);
-    wrap.appendChild(manageBtn);
   }
 
   function visibleIds(){
@@ -1101,7 +1101,7 @@
       return (projects[b].updatedAt||0) - (projects[a].updatedAt||0);
     });
     if (ids.length === 0){ wrap.appendChild(el("div", "empty-hint", "Sem projetos registados ainda.")); return; }
-    ids.forEach(function(id){ wrap.appendChild(renderProjectRow(id)); });
+    ids.forEach(function(id){ wrap.appendChild(renderProjectBlock(id)); });
   }
 
   function renderProjectRow(id){
@@ -1116,12 +1116,351 @@
     main.appendChild(sub);
     row.appendChild(main);
 
+    var sum = scheduleSummary(p);
+    if (sum){
+      var sched = el("div", "project-row-schedule");
+      var prog = el("span", "project-progress");
+      var bar = el("span", "project-progress-bar");
+      var fill = el("span", "project-progress-fill"); fill.style.width = Math.round(sum.done / sum.total * 100) + "%";
+      bar.appendChild(fill); prog.appendChild(bar);
+      prog.appendChild(el("span", "mono", sum.done + "/" + sum.total + " etapas"));
+      sched.appendChild(prog);
+      if (sum.next){
+        var nx = el("span", "project-next state-" + sum.state.cls);
+        nx.textContent = "Próximo prazo: " + shortDate(sum.next.due) + " · " + sum.next.name + (sum.state.cls === "late" ? " (atrasado)" : "");
+        sched.appendChild(nx);
+      } else {
+        sched.appendChild(el("span", "project-next state-done", "Todas as etapas entregues"));
+      }
+      main.appendChild(sched);
+    }
+
     var docCount = (p.documents || []).length;
     if (docCount > 0) row.appendChild(el("div", "project-row-docs mono", docCount + " doc" + (docCount > 1 ? "s" : "")));
 
     row.appendChild(el("div", "project-status-badge project-status-" + (p.status || "ativo"), PROJECT_STATUS_LABEL[p.status] || "Ativo"));
     row.addEventListener("click", function(){ openProjectModal(id); });
     return row;
+  }
+
+  // ---------- project schedule (cronograma) ----------
+  // project.schedule = [{ id, name, start:"AAAA-MM-DD", due:"AAAA-MM-DD", done:bool, doneAt:"AAAA-MM-DD"|"" }]
+  var scheduleDraft = [];
+
+  function dayNumber(iso){ var p = iso.split("-").map(Number); return Date.UTC(p[0], p[1] - 1, p[2]) / 86400000; }
+  function daysBetween(a, b){ return dayNumber(b) - dayNumber(a); }
+  function shortDate(iso){
+    if (!iso) return "—";
+    var p = iso.split("-").map(Number);
+    return p[2] + " " + MONTHS[p[1] - 1] + (String(p[0]) !== todayStr().slice(0, 4) ? " " + p[0] : "");
+  }
+  // State of a stage: label + css class ("done", "late", "soon", "planned").
+  function stepState(s){
+    var today = todayStr();
+    if (s.done){
+      var late = s.doneAt && s.due && s.doneAt > s.due;
+      return { cls: late ? "done-late" : "done", text: "Entregue" + (s.doneAt ? " a " + shortDate(s.doneAt) : "") + (late ? " (com atraso)" : "") };
+    }
+    var d = daysBetween(today, s.due);
+    if (d < 0) return { cls:"late", text:"Atrasado " + (-d) + (d === -1 ? " dia" : " dias") };
+    if (d === 0) return { cls:"soon", text:"Entrega hoje" };
+    if (d <= 7) return { cls:"soon", text:"Faltam " + d + (d === 1 ? " dia" : " dias") };
+    return { cls:"planned", text:"Faltam " + d + " dias" };
+  }
+  function sortedSteps(list){
+    return list.slice().sort(function(a, b){
+      if (a.due !== b.due) return a.due < b.due ? -1 : 1;
+      return (a.start || "") < (b.start || "") ? -1 : 1;
+    });
+  }
+
+  function renderSchedule(){
+    renderScheduleList();
+    renderScheduleChart();
+  }
+
+  function renderScheduleList(){
+    var list = document.getElementById("scheduleList");
+    list.innerHTML = "";
+    if (!scheduleDraft.length){
+      list.appendChild(el("div", "hint", "Sem etapas. Escreve a ação, o início e o prazo de entrega, e carrega Adicionar."));
+      return;
+    }
+    sortedSteps(scheduleDraft).forEach(function(s){
+      var st = stepState(s);
+      var row = el("div", "schedule-step step-" + st.cls);
+      var cb = document.createElement("input");
+      cb.type = "checkbox"; cb.checked = !!s.done;
+      cb.setAttribute("aria-label", "Etapa concluída");
+      cb.addEventListener("change", function(){
+        s.done = cb.checked;
+        s.doneAt = cb.checked ? todayStr() : "";
+        renderSchedule();
+      });
+      row.appendChild(cb);
+
+      var main = el("div", "schedule-step-main");
+      var name = el("div", "schedule-step-name"); name.textContent = s.name; main.appendChild(name);
+      var dates = el("div", "schedule-step-dates");
+      function dateInput(key, label){
+        var input = document.createElement("input");
+        input.type = "date"; input.value = s[key] || "";
+        input.setAttribute("aria-label", label);
+        input.addEventListener("change", function(){
+          if (!input.value){ input.value = s[key]; return; }
+          var next = Object.assign({}, s); next[key] = input.value;
+          if (next.start && next.due && next.due < next.start){
+            showStepError("O prazo de entrega não pode ser antes do início.");
+            input.value = s[key];
+            return;
+          }
+          s[key] = input.value;
+          hideStepError();
+          renderSchedule();
+        });
+        return input;
+      }
+      dates.appendChild(dateInput("start", "Início"));
+      dates.appendChild(el("span", "schedule-arrow", "→"));
+      dates.appendChild(dateInput("due", "Prazo de entrega"));
+      var dur = weeksLabel(s.start || s.due, s.due);
+      if (dur) dates.appendChild(el("span", "schedule-duration", dur));
+      main.appendChild(dates);
+      row.appendChild(main);
+
+      row.appendChild(el("span", "schedule-state state-" + st.cls, escapeHtml(st.text)));
+      var rm = el("button", "icon-btn", "×");
+      rm.type = "button"; rm.title = "Remover etapa"; rm.setAttribute("aria-label", "Remover etapa");
+      rm.addEventListener("click", function(){
+        scheduleDraft = scheduleDraft.filter(function(x){ return x.id !== s.id; });
+        renderSchedule();
+      });
+      row.appendChild(rm);
+      list.appendChild(row);
+    });
+  }
+
+  // Timeline: one bar per stage from start to deadline, month ticks and a "hoje" line.
+  function renderScheduleChart(){
+    var box = document.getElementById("scheduleChart");
+    box.innerHTML = "";
+    box.hidden = !scheduleDraft.length;
+    if (!scheduleDraft.length) return;
+    var today = todayStr();
+    var steps = sortedSteps(scheduleDraft);
+    var first = steps.reduce(function(m, s){ var a = s.start || s.due; return a < m ? a : m; }, today);
+    var last = steps.reduce(function(m, s){ return s.due > m ? s.due : m; }, today);
+    var start = dayNumber(first) - 2, end = dayNumber(last) + 3, span = Math.max(end - start, 7);
+    function pct(iso){ return ((dayNumber(iso) - start) / span * 100).toFixed(2) + "%"; }
+
+    var axis = el("div", "schedule-axis");
+    // Month starts inside the range
+    var d = new Date(Date.UTC(new Date(start * 86400000).getUTCFullYear(), new Date(start * 86400000).getUTCMonth() + 1, 1));
+    while (d.getTime() / 86400000 < end){
+      var iso = d.toISOString().slice(0, 10);
+      var tick = el("span", "schedule-tick"); tick.style.left = pct(iso);
+      tick.textContent = MONTHS[d.getUTCMonth()] + (d.getUTCMonth() === 0 ? " " + d.getUTCFullYear() : "");
+      axis.appendChild(tick);
+      d.setUTCMonth(d.getUTCMonth() + 1);
+    }
+    box.appendChild(axis);
+
+    var rows = el("div", "schedule-rows");
+    var todayLine = el("div", "schedule-today"); todayLine.style.left = pct(today);
+    todayLine.appendChild(el("span", "", "hoje"));
+    rows.appendChild(todayLine);
+    steps.forEach(function(s){
+      var st = stepState(s);
+      var row = el("div", "schedule-row");
+      var bar = el("div", "schedule-bar bar-" + st.cls);
+      var from = s.start || s.due;
+      bar.style.left = pct(from);
+      bar.style.width = "calc(" + ((daysBetween(from, s.due) + 1) / span * 100).toFixed(2) + "% )";
+      bar.title = s.name + " — " + shortDate(from) + " → " + shortDate(s.due) + " · " + st.text;
+      var label = el("span", "schedule-bar-label"); label.textContent = s.name;
+      bar.appendChild(label);
+      row.appendChild(bar);
+      rows.appendChild(row);
+    });
+    box.appendChild(rows);
+  }
+
+  function addDaysIso(iso, days){
+    var p = iso.split("-").map(Number);
+    return new Date(Date.UTC(p[0], p[1] - 1, p[2] + days)).toISOString().slice(0, 10);
+  }
+  // "Prazo em semanas": weeks → delivery date (from the start date), and a chosen date → weeks.
+  function stepWeeksChanged(){
+    var w = parseInt(document.getElementById("stepWeeks").value, 10);
+    var start = document.getElementById("stepStart").value || todayStr();
+    if (w > 0) document.getElementById("stepDue").value = addDaysIso(start, w * 7);
+  }
+  function stepDueChanged(){
+    var due = document.getElementById("stepDue").value;
+    var start = document.getElementById("stepStart").value || todayStr();
+    var weeksEl = document.getElementById("stepWeeks");
+    if (!due){ weeksEl.value = ""; return; }
+    var days = daysBetween(start, due);
+    // Show whole weeks only when the date is an exact number of weeks away.
+    weeksEl.value = days > 0 && days % 7 === 0 ? String(days / 7) : "";
+  }
+  function stepStartChanged(){
+    if (parseInt(document.getElementById("stepWeeks").value, 10) > 0) stepWeeksChanged();
+  }
+  function weeksLabel(start, due){
+    var days = daysBetween(start, due) ;
+    if (days <= 0) return "";
+    return days % 7 === 0 ? (days / 7) + (days === 7 ? " semana" : " semanas") : days + " dias";
+  }
+
+  function showStepError(msg){ var e = document.getElementById("stepError"); e.textContent = msg; e.hidden = false; }
+  function hideStepError(){ document.getElementById("stepError").hidden = true; }
+
+  function addStepFromForm(){
+    var nameEl = document.getElementById("stepName"), startEl = document.getElementById("stepStart"), dueEl = document.getElementById("stepDue");
+    var name = nameEl.value.trim(), start = startEl.value || todayStr(), due = dueEl.value;
+    if (!name){ showStepError("Escreve a etapa ou ação."); nameEl.focus(); return; }
+    if (!due){ showStepError("Indica o prazo de entrega (data ou semanas)."); document.getElementById("stepWeeks").focus(); return; }
+    if (due < start){ showStepError("O prazo de entrega não pode ser antes do início."); dueEl.focus(); return; }
+    hideStepError();
+    scheduleDraft.push({ id:genId(), name:name, start:start, due:due, done:false, doneAt:"" });
+    nameEl.value = ""; dueEl.value = ""; document.getElementById("stepWeeks").value = "";
+    startEl.value = todayStr();
+    renderSchedule();
+    nameEl.focus();
+  }
+
+  // Summary for the project list: progress and the next deadline.
+  function scheduleSummary(p){
+    var list = p.schedule || [];
+    if (!list.length) return null;
+    var done = list.filter(function(s){ return s.done; }).length;
+    var next = sortedSteps(list.filter(function(s){ return !s.done; }))[0];
+    return { done:done, total:list.length, next:next, state: next ? stepState(next) : null };
+  }
+
+  // ---------- project timeline (vertical) ----------
+  // Everything with a date that belongs to a project, in order: cronograma stages, the project's
+  // tasks (with their work points) and meetings (with their actions), plus a "Hoje" marker.
+  var collapsedTimelines = {};
+  try { collapsedTimelines = JSON.parse(localStorage.getItem("qt_project_timeline_closed") || "{}") || {}; } catch(e){}
+  var TL_KIND_LABEL = { etapa:"Etapa", tarefa:"Tarefa", reuniao:"Reunião" };
+  var TASK_STATUS_TEXT = { todo:"A fazer", doing:"Em curso", done:"Concluída" };
+
+  function projectTimelineItems(pid){
+    var p = projects[pid], today = todayStr(), items = [];
+    (p.schedule || []).forEach(function(s){
+      items.push({
+        kind:"etapa", date:s.due, title:s.name, state:stepState(s),
+        detail:(s.start && s.start !== s.due ? "Início " + shortDate(s.start) + " → " : "") + "Entrega " + shortDate(s.due),
+        points:[], open:function(){ openProjectModal(pid); }
+      });
+    });
+    Object.keys(tasks).forEach(function(id){
+      var t = tasks[id];
+      if (t.projectId !== pid) return;
+      var state;
+      if (t.status === "done") state = { cls:"done", text:"Concluída" };
+      else if (t.due && t.due < today) state = { cls:"late", text:"Atrasada" };
+      else if (t.due && daysBetween(today, t.due) <= 7) state = { cls:"soon", text:TASK_STATUS_TEXT[t.status] };
+      else state = { cls:"planned", text:TASK_STATUS_TEXT[t.status] || "A fazer" };
+      items.push({
+        kind:"tarefa", date:t.due || null, title:t.title, state:state,
+        detail:(PRIORITY_LABEL[t.priority] ? "Prioridade " + PRIORITY_LABEL[t.priority].toLowerCase() : "") + (t.due ? "" : " · sem prazo"),
+        points:(t.points || []).map(function(x){ return { text:x.text, done:!!x.done }; }),
+        open:function(){ openTaskModal(id); }
+      });
+    });
+    Object.keys(meetings).forEach(function(id){
+      var m = meetings[id];
+      if (m.projectId !== pid) return;
+      var actions = m.actions || [];
+      var pending = actions.filter(function(a){ return !a.done; }).length;
+      var state = m.date && m.date > today ? { cls:"planned", text:"Agendada" }
+        : (pending ? { cls:"soon", text:pending + (pending === 1 ? " ação pendente" : " ações pendentes") } : { cls:"done", text:"Realizada" });
+      items.push({
+        kind:"reuniao", date:m.date || null, title:m.title, state:state,
+        detail:m.summary ? m.summary.split(/\r?\n/)[0] : "",
+        points:actions.map(function(a){ return { text:a.text, done:!!a.done }; }),
+        open:function(){ openMeetingModal(id); }
+      });
+    });
+    items.sort(function(a, b){
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0);
+    });
+    return items;
+  }
+
+  function renderProjectTimeline(pid, items){
+    var today = todayStr();
+    var list = el("ol", "ptl");
+    var todayShown = false;
+    function todayMarker(){
+      var li = el("li", "ptl-today");
+      li.appendChild(el("span", "ptl-today-label", "Hoje · " + shortDate(today)));
+      list.appendChild(li);
+      todayShown = true;
+    }
+    items.forEach(function(it){
+      if (!todayShown && (!it.date || it.date > today)) todayMarker();
+      var li = el("li", "ptl-item ptl-" + it.kind + (it.date && it.date < today ? " is-past" : ""));
+      var date = el("div", "ptl-date");
+      date.textContent = it.date ? shortDate(it.date) : "Sem data";
+      li.appendChild(date);
+      li.appendChild(el("span", "ptl-dot"));
+
+      var card = el("button", "ptl-card");
+      card.type = "button";
+      card.addEventListener("click", function(e){ e.stopPropagation(); it.open(); });
+      var head = el("div", "ptl-head");
+      head.appendChild(el("span", "ptl-kind", TL_KIND_LABEL[it.kind]));
+      var title = el("span", "ptl-title"); title.textContent = it.title; head.appendChild(title);
+      head.appendChild(el("span", "ptl-state state-" + it.state.cls, escapeHtml(it.state.text)));
+      card.appendChild(head);
+      if (it.detail){ var det = el("div", "ptl-detail"); det.textContent = it.detail; card.appendChild(det); }
+      if (it.points.length){
+        var ul = el("ul", "ptl-points");
+        it.points.forEach(function(pt){
+          var pli = el("li", pt.done ? "is-done" : "");
+          pli.appendChild(el("span", "ptl-check", pt.done ? "✓" : ""));
+          var tx = el("span"); tx.textContent = pt.text; pli.appendChild(tx);
+          ul.appendChild(pli);
+        });
+        card.appendChild(ul);
+      }
+      li.appendChild(card);
+      list.appendChild(li);
+    });
+    if (!todayShown) todayMarker();
+    return list;
+  }
+
+  function renderProjectBlock(pid){
+    var block = el("div", "project-block");
+    var row = renderProjectRow(pid);
+    var items = projectTimelineItems(pid);
+    if (items.length){
+      var closed = !!collapsedTimelines[pid];
+      var toggle = el("button", "project-timeline-toggle" + (closed ? "" : " is-open"));
+      toggle.type = "button";
+      toggle.setAttribute("aria-expanded", closed ? "false" : "true");
+      toggle.textContent = (closed ? "▸ " : "▾ ") + "Linha temporal (" + items.length + ")";
+      toggle.addEventListener("click", function(e){
+        e.stopPropagation();
+        if (collapsedTimelines[pid]) delete collapsedTimelines[pid]; else collapsedTimelines[pid] = true;
+        try { localStorage.setItem("qt_project_timeline_closed", JSON.stringify(collapsedTimelines)); } catch(err){}
+        renderProjectsList();
+      });
+      row.querySelector(".project-row-main").appendChild(toggle);
+      block.appendChild(row);
+      if (!closed) block.appendChild(renderProjectTimeline(pid, items));
+    } else {
+      block.appendChild(row);
+    }
+    return block;
   }
 
   // ---------- expenses monthly map ----------
@@ -1342,6 +1681,7 @@
     var payload = {
       title:title,
       clientId: document.getElementById("meetingClient").value || null,
+      projectId: document.getElementById("meetingProject").value || null,
       date: document.getElementById("meetingDate").value || todayStr(),
       agenda: document.getElementById("meetingAgenda").value.trim(),
       notes: document.getElementById("meetingNotes").value.trim(),
@@ -1390,12 +1730,18 @@
   function saveProjectFromModal(){
     var name = document.getElementById("projectName").value.trim();
     if (!name){ document.getElementById("projectName").focus(); return; }
+    if (document.getElementById("stepName").value.trim()){
+      var before = scheduleDraft.length;
+      addStepFromForm();
+      if (scheduleDraft.length === before) return; // incomplete step: the message says what is missing
+    }
     var payload = {
       name:name,
       clientId: document.getElementById("projectClient").value || null,
       status: document.getElementById("projectStatusSeg").dataset.value,
       description: document.getElementById("projectDescription").value.trim(),
       documents: documentsDraft.map(function(d){ return { id:d.id, name:d.name, contentType:d.contentType, sizeBytes:d.sizeBytes, uploadedAt:d.uploadedAt }; }),
+      schedule: sortedSteps(scheduleDraft),
       updatedAt: Date.now()
     };
     if (editingProjectId){ projects[editingProjectId] = Object.assign({}, projects[editingProjectId], payload); }
@@ -1939,9 +2285,10 @@
     sel.appendChild(newOpt);
   }
   // Existing projects: the chosen client's first, then the others; finished ones marked.
-  function populateTaskProjectSelect(selectedId){
-    var sel = document.getElementById("taskProject");
-    var clientId = document.getElementById("taskClient").value;
+  function populateTaskProjectSelect(selectedId){ populateProjectSelect("taskProject", "taskClient", selectedId); }
+  function populateProjectSelect(selectId, clientSelectId, selectedId){
+    var sel = document.getElementById(selectId);
+    var clientId = document.getElementById(clientSelectId).value;
     sel.innerHTML = "";
     var none = el("option", "", "Sem projeto");
     none.value = "";
@@ -2063,6 +2410,7 @@
       document.getElementById("meetingTitle").value = m.title;
       document.getElementById("meetingDate").value = m.date || todayStr();
       populateClientSelect("meetingClient", m.clientId);
+      populateProjectSelect("meetingProject", "meetingClient", m.projectId);
       document.getElementById("meetingAgenda").value = m.agenda || "";
       document.getElementById("meetingNotes").value = m.notes || "";
       document.getElementById("meetingSummary").value = m.summary || "";
@@ -2074,6 +2422,7 @@
       document.getElementById("meetingTitle").value = "";
       document.getElementById("meetingDate").value = todayStr();
       populateClientSelect("meetingClient", activeClientFilter);
+      populateProjectSelect("meetingProject", "meetingClient", null);
       document.getElementById("meetingAgenda").value = "";
       document.getElementById("meetingNotes").value = "";
       document.getElementById("meetingSummary").value = "";
@@ -2094,6 +2443,11 @@
   // ---------- project modal ----------
   function openProjectModal(id){
     editingProjectId = id || null;
+    document.getElementById("stepName").value = "";
+    document.getElementById("stepStart").value = todayStr();
+    document.getElementById("stepDue").value = "";
+    document.getElementById("stepWeeks").value = "";
+    hideStepError();
     var overlay = document.getElementById("projectModalOverlay");
     var title = document.getElementById("projectModalTitle");
     var deleteBtn = document.getElementById("deleteProjectBtn");
@@ -2110,6 +2464,7 @@
       setSegValue("projectStatusSeg", p.status || "ativo");
       document.getElementById("projectDescription").value = p.description || "";
       documentsDraft = (p.documents || []).map(function(d){ return Object.assign({}, d); });
+      scheduleDraft = (p.schedule || []).map(function(st){ return Object.assign({}, st); });
       deleteBtn.hidden = false;
       resetConfirm(deleteBtn, "Eliminar");
     } else {
@@ -2119,9 +2474,11 @@
       setSegValue("projectStatusSeg", "ativo");
       document.getElementById("projectDescription").value = "";
       documentsDraft = [];
+      scheduleDraft = [];
       deleteBtn.hidden = true;
     }
     renderDocumentsDraft();
+    renderSchedule();
     overlay.hidden = false;
     setTimeout(function(){ document.getElementById("projectName").focus(); }, 0);
   }
@@ -2224,46 +2581,420 @@
   }
 
   // ---------- clients modal ----------
-  function openClientsModal(){ renderClientsList(); document.getElementById("clientsModalOverlay").hidden = false; }
-  function closeClientsModal(){ document.getElementById("clientsModalOverlay").hidden = true; render(); }
+  // ---------- clients page ----------
+  // List of clients (click → client form) with search and a Clientes / Potenciais filter.
+  // Client fields: name, type ("cliente" | "potencial"), nif, sector, contact, phone, email,
+  // address/lat/lng (map), color, notes.
+  var clientsSearchText = "";
+  var clientsTypeFilter = "todos";
+  var CLIENT_SECTORS = ["Moldes","Metalomecânica","Automóvel","Aeronáutica","Ferramentaria","Construção","Energia","Indústria alimentar","Distribuição","Outro"];
+  var ICON_PHONE = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.6 3.5h2.6l1.6 4-2 1.3a11 11 0 0 0 5.4 5.4l1.3-2 4 1.6v2.6a2 2 0 0 1-2.2 2A16.5 16.5 0 0 1 4.6 5.7a2 2 0 0 1 2-2.2z"/></svg>';
+  var ICON_MAIL = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m3.5 7 8.5 6 8.5-6"/></svg>';
+  var ICON_PIN = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.4"/></svg>';
+
+  function clientStats(cid){
+    var openTasks = 0, meetingsN = 0, projectsN = 0;
+    Object.keys(tasks).forEach(function(id){ if (tasks[id].clientId === cid && tasks[id].status !== "done") openTasks++; });
+    Object.keys(meetings).forEach(function(id){ if (meetings[id].clientId === cid) meetingsN++; });
+    Object.keys(projects).forEach(function(id){ if (projects[id].clientId === cid) projectsN++; });
+    var parts = [];
+    if (openTasks) parts.push(openTasks === 1 ? "1 tarefa aberta" : openTasks + " tarefas abertas");
+    if (meetingsN) parts.push(meetingsN === 1 ? "1 reunião" : meetingsN + " reuniões");
+    if (projectsN) parts.push(projectsN === 1 ? "1 projeto" : projectsN + " projetos");
+    return parts.join(" · ");
+  }
+  function telHref(phone){ return "tel:" + String(phone).replace(/[^\d+]/g, ""); }
 
   function renderClientsList(){
     var list = document.getElementById("clientsList");
+    if (!list) return;
     list.innerHTML = "";
-    var ids = Object.keys(clients).sort(function(a,b){ return (clients[a].order||0) - (clients[b].order||0); });
-    if (ids.length === 0) list.appendChild(el("p", "hint", "Ainda não tens clientes. Adiciona um abaixo."));
-    ids.forEach(function(cid){
-      var row = el("div", "client-row");
-      var swatch = el("button", "swatch"); swatch.type = "button"; swatch.style.background = clients[cid].color;
-      row.appendChild(swatch);
-
-      var nameInput = el("input");
-      nameInput.type = "text"; nameInput.value = clients[cid].name; nameInput.maxLength = 60;
-      nameInput.addEventListener("change", function(){ renameClient(cid, nameInput.value); });
-      row.appendChild(nameInput);
-
-      var delBtn = el("button", "btn btn-danger btn-sm", "Eliminar");
-      delBtn.addEventListener("click", function(){
-        if (delBtn.dataset.confirming === "1"){ deleteClient(cid); renderClientsList(); render(); }
-        else {
-          delBtn.dataset.confirming = "1"; delBtn.textContent = "Confirmar?"; delBtn.classList.add("confirming");
-          setTimeout(function(){ delBtn.dataset.confirming = ""; delBtn.textContent = "Eliminar"; delBtn.classList.remove("confirming"); }, 3000);
-        }
-      });
-      row.appendChild(delBtn);
-
-      var picker = el("div", "swatch-picker");
-      PALETTE.forEach(function(color){
-        var mini = el("button", "swatch-mini" + (color === clients[cid].color ? " selected" : ""));
-        mini.type = "button"; mini.style.background = color;
-        mini.addEventListener("click", function(){ recolorClient(cid, color); });
-        picker.appendChild(mini);
-      });
-
-      var wrap = el("div", ""); wrap.style.width = "100%";
-      wrap.appendChild(row); wrap.appendChild(picker);
-      list.appendChild(wrap);
+    var q = plainWord(clientsSearchText.trim());
+    var all = Object.keys(clients).sort(function(a,b){
+      return String(clients[a].name).localeCompare(String(clients[b].name), "pt", { sensitivity:"base" });
     });
+    var ids = all.filter(function(cid){
+      var c = clients[cid];
+      if (clientsTypeFilter !== "todos" && (c.type || "cliente") !== clientsTypeFilter) return false;
+      if (!q) return true;
+      return [c.name, c.contact, c.sector, c.address, c.email, c.nif].some(function(v){ return plainWord(v || "").indexOf(q) >= 0; });
+    });
+    if (all.length === 0){
+      list.appendChild(el("div", "task-empty task-empty-all", "Ainda não tens clientes. Carrega em \"+ Novo cliente\" para criar o primeiro."));
+      return;
+    }
+    if (ids.length === 0){
+      list.appendChild(el("div", "task-empty", "Nenhum cliente corresponde à pesquisa."));
+      return;
+    }
+    ids.forEach(function(cid){
+      var c = clients[cid];
+      var row = el("div", "client-card");
+      row.style.setProperty("--client-color", c.color);
+      row.tabIndex = 0;
+      row.setAttribute("role", "button");
+      row.setAttribute("aria-label", "Abrir ficha de " + c.name);
+      row.addEventListener("click", function(){ openClientModal(cid); });
+      row.addEventListener("keydown", function(e){ if (e.key === "Enter" && e.target === row) openClientModal(cid); });
+
+      var dot = el("span", "client-color");
+      dot.style.background = c.color;
+      row.appendChild(dot);
+
+      var main = el("div", "client-main");
+      var title = el("div", "client-title");
+      var name = el("span", "client-name"); name.textContent = c.name; title.appendChild(name);
+      if (c.type === "potencial") title.appendChild(el("span", "client-type-badge", "Potencial"));
+      if (c.sector){ var sec = el("span", "client-sector"); sec.textContent = c.sector; title.appendChild(sec); }
+      main.appendChild(title);
+      var metaParts = [];
+      if (c.contact) metaParts.push(c.contact);
+      if (c.address) metaParts.push(c.address);
+      var stats = clientStats(cid);
+      if (stats) metaParts.push(stats);
+      var meta = el("div", "client-meta");
+      meta.textContent = metaParts.join(" · ") || "Sem contacto nem morada";
+      main.appendChild(meta);
+      row.appendChild(main);
+
+      // Quick actions (they don't open the form).
+      var actions = el("div", "client-actions");
+      function action(tag, cls, html, label, onClick, href){
+        var a = el(tag, "icon-btn client-action " + cls);
+        a.innerHTML = html;
+        a.title = label; a.setAttribute("aria-label", label);
+        if (href){ a.href = href; }
+        else { a.type = "button"; }
+        a.addEventListener("click", function(e){ e.stopPropagation(); if (onClick) onClick(); });
+        actions.appendChild(a);
+      }
+      if (c.phone) action("a", "", ICON_PHONE, "Ligar para " + c.phone, null, telHref(c.phone));
+      if (c.email) action("a", "", ICON_MAIL, "Enviar email para " + c.email, null, "mailto:" + c.email);
+      action("button", hasLocation(c) ? "is-set" : "", ICON_PIN, hasLocation(c) ? "Ver ou mudar a localização" : "Definir localização", function(){ openLocationModal(cid); });
+      row.appendChild(actions);
+      list.appendChild(row);
+    });
+  }
+
+  // ---------- client form ----------
+  var editingClientId = null;
+  var clientDraft = null; // { color, address, lat, lng } while the form is open
+
+  // Portuguese NIF check digit; other formats (e.g. foreign VAT numbers) are accepted as typed.
+  function nifProblem(raw){
+    var v = String(raw || "").replace(/\s+/g, "").toUpperCase().replace(/^PT/, "");
+    if (!v || !/^\d+$/.test(v)) return false;
+    if (v.length !== 9) return true;
+    var sum = 0;
+    for (var i = 0; i < 8; i++) sum += parseInt(v.charAt(i), 10) * (9 - i);
+    var check = 11 - (sum % 11);
+    if (check >= 10) check = 0;
+    return check !== parseInt(v.charAt(8), 10);
+  }
+  function emailProblem(raw){
+    var v = String(raw || "").trim();
+    return !!v && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+  }
+
+  function renderClientLocationButton(){
+    var btn = document.getElementById("clientLocationBtn");
+    var set = hasLocation(clientDraft);
+    btn.classList.toggle("is-set", set);
+    btn.innerHTML = ICON_PIN;
+    var span = el("span");
+    span.textContent = set ? (clientDraft.address || "Marcado no mapa") : "Definir localização no mapa";
+    btn.appendChild(span);
+  }
+  function renderClientColorPicker(){
+    var picker = document.getElementById("clientColorPicker");
+    picker.innerHTML = "";
+    PALETTE.forEach(function(color){
+      var mini = el("button", "swatch-mini" + (color === clientDraft.color ? " selected" : ""));
+      mini.type = "button"; mini.style.background = color;
+      mini.setAttribute("aria-label", "Cor " + color);
+      mini.addEventListener("click", function(){ clientDraft.color = color; renderClientColorPicker(); });
+      picker.appendChild(mini);
+    });
+  }
+
+  function openClientModal(id){
+    editingClientId = id && clients[id] ? id : null;
+    var c = editingClientId ? clients[editingClientId] : {};
+    clientDraft = {
+      color: c.color || nextPaletteColor(),
+      address: c.address || "", lat: c.lat, lng: c.lng
+    };
+    document.getElementById("clientModalTitle").textContent = editingClientId ? "Ficha do cliente" : "Novo cliente";
+    document.getElementById("clientName").value = c.name || "";
+    setSegValue("clientTypeSeg", c.type || "cliente");
+    document.getElementById("clientNif").value = c.nif || "";
+    document.getElementById("clientSector").value = c.sector || "";
+    document.getElementById("clientContact").value = c.contact || "";
+    document.getElementById("clientPhone").value = c.phone || "";
+    document.getElementById("clientEmail").value = c.email || "";
+    document.getElementById("clientNotes").value = c.notes || "";
+    ["clientNameError","clientNifError","clientEmailError"].forEach(function(e){ document.getElementById(e).hidden = true; });
+    // Sector suggestions: the usual ones plus those already used.
+    var seen = {}, sectors = [];
+    CLIENT_SECTORS.concat(Object.keys(clients).map(function(k){ return clients[k].sector || ""; })).forEach(function(s){
+      var k = s.trim().toLowerCase();
+      if (k && !seen[k]){ seen[k] = true; sectors.push(s.trim()); }
+    });
+    var dl = document.getElementById("clientSectorList");
+    dl.innerHTML = "";
+    sectors.forEach(function(s){ var o = document.createElement("option"); o.value = s; dl.appendChild(o); });
+    renderClientLocationButton();
+    renderClientColorPicker();
+    var del = document.getElementById("deleteClientBtn");
+    del.hidden = !editingClientId;
+    resetConfirm(del, "Eliminar");
+    document.getElementById("clientModalOverlay").hidden = false;
+    setTimeout(function(){ document.getElementById("clientName").focus(); }, 0);
+  }
+  function closeClientModal(){
+    document.getElementById("clientModalOverlay").hidden = true;
+    editingClientId = null;
+    clientDraft = null;
+  }
+  function openClientFormLocation(){
+    openLocationModal({
+      name: document.getElementById("clientName").value.trim(),
+      address: clientDraft.address, lat: clientDraft.lat, lng: clientDraft.lng,
+      onSave:function(address, lat, lng){
+        clientDraft.address = address; clientDraft.lat = lat; clientDraft.lng = lng;
+        renderClientLocationButton();
+      },
+      onClear:function(){
+        clientDraft.address = ""; clientDraft.lat = undefined; clientDraft.lng = undefined;
+        renderClientLocationButton();
+      }
+    });
+  }
+
+  function saveClientFromModal(){
+    var name = document.getElementById("clientName").value.trim();
+    var nif = document.getElementById("clientNif").value.trim();
+    var email = document.getElementById("clientEmail").value.trim();
+    var problems = [
+      ["clientNameError", !name, "clientName"],
+      ["clientNifError", nifProblem(nif), "clientNif"],
+      ["clientEmailError", emailProblem(email), "clientEmail"]
+    ];
+    var first = null;
+    problems.forEach(function(pr){
+      document.getElementById(pr[0]).hidden = !pr[1];
+      if (pr[1] && !first) first = pr[2];
+    });
+    if (first){ document.getElementById(first).focus(); return; }
+
+    var id = editingClientId || genId();
+    var c = clients[id] || { order:Date.now() };
+    c.name = name;
+    c.type = document.getElementById("clientTypeSeg").dataset.value;
+    c.nif = nif;
+    c.sector = document.getElementById("clientSector").value.trim();
+    c.contact = document.getElementById("clientContact").value.trim();
+    c.phone = document.getElementById("clientPhone").value.trim();
+    c.email = email;
+    c.notes = document.getElementById("clientNotes").value.trim();
+    c.color = clientDraft.color;
+    if (hasLocation(clientDraft)){ c.address = clientDraft.address; c.lat = clientDraft.lat; c.lng = clientDraft.lng; }
+    else { delete c.address; delete c.lat; delete c.lng; }
+    c.updatedAt = Date.now();
+    clients[id] = c;
+    closeClientModal();
+    saveStore(); renderClientsList(); render();
+  }
+  function deleteClientFromModal(){
+    if (!editingClientId) return;
+    deleteClient(editingClientId);
+    closeClientModal();
+    renderClientsList(); render();
+  }
+
+  // ---------- clients map (Leaflet + OpenStreetMap) ----------
+  // Each client may have { address, lat, lng }. The Início shows them on a map; the location is
+  // set in the Clientes page (address search or a click on the map). Map tiles come from
+  // OpenStreetMap; an address is only sent to the OpenStreetMap search when "Procurar" is used.
+  var MAP_DEFAULT_VIEW = { center:[39.6, -8.0], zoom:6 }; // Portugal
+  var homeMap = null, homeMapLayer = null;
+  var locationMap = null, locationPin = null;
+  // What the location window is editing: { name, address, lat, lng, onSave(address, lat, lng), onClear() }
+  var locationTarget = null;
+
+  function mapsAvailable(){ return typeof window.L !== "undefined"; }
+  function addTiles(map){
+    window.L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom:19,
+      attribution:'&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'
+    }).addTo(map);
+  }
+  function hasLocation(c){ return c && typeof c.lat === "number" && typeof c.lng === "number"; }
+  function openTaskCount(cid){
+    return Object.keys(tasks).filter(function(id){ return tasks[id].clientId === cid && tasks[id].status !== "done"; }).length;
+  }
+
+  function renderClientMap(){
+    var box = document.getElementById("homeMap");
+    var hint = document.getElementById("homeMapHint");
+    var ids = Object.keys(clients).sort(function(a,b){ return (clients[a].order||0) - (clients[b].order||0); });
+    var located = ids.filter(function(cid){ return hasLocation(clients[cid]); });
+    document.getElementById("homeMapCount").textContent = ids.length
+      ? located.length + " de " + ids.length + " cliente(s) com localização" : "";
+    if (!mapsAvailable()){
+      box.hidden = true;
+      hint.hidden = false;
+      hint.textContent = "O mapa não está disponível neste navegador.";
+      return;
+    }
+    hint.hidden = located.length === ids.length;
+    hint.textContent = ids.length
+      ? "Para pôr um cliente no mapa: separador Clientes → Definir localização."
+      : "Ainda não tens clientes. Cria-os no separador Clientes e marca a localização de cada um.";
+
+    if (!homeMap){
+      homeMap = window.L.map(box, { scrollWheelZoom:false, zoomControl:true })
+        .setView(MAP_DEFAULT_VIEW.center, MAP_DEFAULT_VIEW.zoom);
+      addTiles(homeMap);
+      homeMapLayer = window.L.layerGroup().addTo(homeMap);
+      homeMap.on("focus", function(){ homeMap.scrollWheelZoom.enable(); });
+      homeMap.on("blur", function(){ homeMap.scrollWheelZoom.disable(); });
+    }
+    homeMapLayer.clearLayers();
+    var bounds = [];
+    located.forEach(function(cid){
+      var c = clients[cid];
+      var marker = window.L.circleMarker([c.lat, c.lng], {
+        radius:9, weight:3, color:"#ffffff", fillColor:c.color || "#4F46E5", fillOpacity:1
+      });
+      // Popup built from text nodes (no HTML from user data).
+      var pop = el("div", "map-popup");
+      var name = el("strong"); name.textContent = c.name; pop.appendChild(name);
+      if (c.address){ var addr = el("div", "map-popup-address"); addr.textContent = c.address; pop.appendChild(addr); }
+      var n = openTaskCount(cid);
+      var meta = el("div", "map-popup-meta"); meta.textContent = n === 1 ? "1 tarefa aberta" : n + " tarefas abertas";
+      pop.appendChild(meta);
+      marker.bindPopup(pop);
+      marker.bindTooltip(c.name, { direction:"top", offset:[0, -8] });
+      marker.addTo(homeMapLayer);
+      bounds.push([c.lat, c.lng]);
+    });
+    // The container may have just become visible: let Leaflet measure it, then frame the clients.
+    setTimeout(function(){
+      homeMap.invalidateSize();
+      if (bounds.length === 1) homeMap.setView(bounds[0], 13);
+      else if (bounds.length) homeMap.fitBounds(bounds, { padding:[36, 36], maxZoom:13 });
+      else homeMap.setView(MAP_DEFAULT_VIEW.center, MAP_DEFAULT_VIEW.zoom);
+    }, 0);
+  }
+
+  function setLocationStatus(text, isError){
+    var s = document.getElementById("locationStatus");
+    s.textContent = text;
+    s.classList.toggle("error", !!isError);
+  }
+  function placeLocationPin(latlng){
+    if (!locationPin){
+      locationPin = window.L.marker(latlng, {
+        draggable:true,
+        icon:window.L.divIcon({ className:"map-pin", html:"<span></span>", iconSize:[26, 26], iconAnchor:[13, 26] })
+      }).addTo(locationMap);
+    } else {
+      locationPin.setLatLng(latlng);
+    }
+  }
+
+  // A saved client's location (saved straight away).
+  function clientLocationTarget(cid){
+    var c = clients[cid];
+    return {
+      name:c.name, address:c.address, lat:c.lat, lng:c.lng,
+      onSave:function(address, lat, lng){
+        c.address = address; c.lat = lat; c.lng = lng; c.updatedAt = Date.now();
+        saveStore(); renderClientsList(); render();
+      },
+      onClear:function(){
+        delete c.lat; delete c.lng; delete c.address; c.updatedAt = Date.now();
+        saveStore(); renderClientsList(); render();
+      }
+    };
+  }
+
+  // arg: a client id, or a target object (e.g. the client form before the client exists).
+  function openLocationModal(arg){
+    var target = typeof arg === "string" ? (clients[arg] ? clientLocationTarget(arg) : null) : arg;
+    if (!target) return;
+    if (!mapsAvailable()){ alert("O mapa não está disponível neste navegador."); return; }
+    locationTarget = target;
+    var c = target;
+    document.getElementById("locationModalTitle").textContent = "Localização" + (c.name ? " — " + c.name : "");
+    document.getElementById("locationAddress").value = c.address || "";
+    setLocationStatus("Procura a morada ou clica no mapa para marcar o local. Podes arrastar o pino.", false);
+    document.getElementById("locationModalOverlay").hidden = false;
+
+    if (!locationMap){
+      locationMap = window.L.map("locationMap").setView(MAP_DEFAULT_VIEW.center, MAP_DEFAULT_VIEW.zoom);
+      addTiles(locationMap);
+      locationMap.on("click", function(e){
+        placeLocationPin(e.latlng);
+        setLocationStatus("Local marcado. Arrasta o pino para afinar e carrega em Guardar.", false);
+      });
+    }
+    if (locationPin){ locationMap.removeLayer(locationPin); locationPin = null; }
+    setTimeout(function(){
+      locationMap.invalidateSize();
+      if (hasLocation(c)){
+        placeLocationPin([c.lat, c.lng]);
+        locationMap.setView([c.lat, c.lng], 15);
+      } else {
+        locationMap.setView(MAP_DEFAULT_VIEW.center, MAP_DEFAULT_VIEW.zoom);
+      }
+      document.getElementById("locationAddress").focus();
+    }, 0);
+  }
+  function closeLocationModal(){
+    document.getElementById("locationModalOverlay").hidden = true;
+    locationTarget = null;
+  }
+
+  // Address search with OpenStreetMap Nominatim (only on request; one result).
+  function searchLocation(){
+    var q = document.getElementById("locationAddress").value.trim();
+    if (!q){ document.getElementById("locationAddress").focus(); return; }
+    var btn = document.getElementById("locationSearchBtn");
+    btn.disabled = true;
+    setLocationStatus("A procurar…", false);
+    fetch("https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&accept-language=pt&q=" + encodeURIComponent(q))
+      .then(function(r){ if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+      .then(function(results){
+        if (!results.length){
+          setLocationStatus("Não encontrei esta morada. Experimenta só a localidade, ou clica no mapa para marcar o local.", true);
+          return;
+        }
+        var hit = results[0], latlng = [parseFloat(hit.lat), parseFloat(hit.lon)];
+        placeLocationPin(latlng);
+        locationMap.setView(latlng, 16);
+        setLocationStatus("Encontrado: " + hit.display_name + ". Confirma o pino (podes arrastá-lo) e carrega em Guardar.", false);
+      })
+      .catch(function(){
+        setLocationStatus("Não foi possível procurar agora (sem ligação?). Podes clicar no mapa para marcar o local.", true);
+      })
+      .then(function(){ btn.disabled = false; });
+  }
+
+  function saveLocation(){
+    var t = locationTarget;
+    if (!t) return closeLocationModal();
+    if (!locationPin){ setLocationStatus("Marca o local no mapa (ou procura a morada) antes de guardar.", true); return; }
+    var p = locationPin.getLatLng();
+    var address = document.getElementById("locationAddress").value.trim();
+    closeLocationModal();
+    t.onSave(address, Math.round(p.lat * 1e6) / 1e6, Math.round(p.lng * 1e6) / 1e6);
+  }
+  function clearLocation(){
+    var t = locationTarget;
+    closeLocationModal();
+    if (t) t.onClear();
   }
 
   // ---------- export / import (backup) ----------
@@ -2321,8 +3052,9 @@
       if (btn.dataset.view === view) btn.setAttribute("aria-current", "page");
       else btn.removeAttribute("aria-current");
     });
-    var labels = { tasks:"+ Nova tarefa", meetings:"+ Nova reunião", projects:"+ Novo projeto", expenses:"+ Nova despesa" };
+    var labels = { tasks:"+ Nova tarefa", meetings:"+ Nova reunião", projects:"+ Novo projeto", expenses:"+ Nova despesa", clients:"+ Novo cliente" };
     document.getElementById("newItemBtn").textContent = labels[view] || "+ Novo";
+    document.getElementById("newItemBtn").title = labels[view] || "+ Novo";
     render();
     if (view === "home") loadFolderData(); // pick up changes made to the Excel files
   }
@@ -2334,12 +3066,57 @@
     });
 
     document.getElementById("newItemBtn").addEventListener("click", function(){
+      if (currentView === "clients"){ openClientModal(null); return; }
       if (currentView === "tasks") openTaskModal(null);
       else if (currentView === "meetings") openMeetingModal(null);
       else if (currentView === "projects") openProjectModal(null);
       else openExpenseModal(null);
     });
+    // Sidebar: collapse to icons only; the choice is remembered on this device.
+    var collapsed = false;
+    try {
+      var savedSidebar = localStorage.getItem("qt_sidebar_collapsed");
+      collapsed = savedSidebar === null ? window.innerWidth < 1000 : savedSidebar === "1";
+    } catch(e){}
+    function applySidebar(){
+      document.body.classList.toggle("sidebar-collapsed", collapsed);
+      var t = document.getElementById("sidebarToggle");
+      var label = collapsed ? "Mostrar a barra lateral" : "Esconder a barra lateral";
+      t.title = label; t.setAttribute("aria-label", label);
+      t.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      // The map needs to re-measure once the content area has changed width.
+      setTimeout(function(){ if (homeMap) homeMap.invalidateSize(); }, 250);
+    }
+    applySidebar();
+    document.getElementById("sidebarToggle").addEventListener("click", function(){
+      collapsed = !collapsed;
+      try { localStorage.setItem("qt_sidebar_collapsed", collapsed ? "1" : "0"); } catch(e){}
+      applySidebar();
+    });
+    Array.prototype.forEach.call(document.querySelectorAll("#viewTabs button"), function(btn){
+      btn.title = btn.textContent.trim(); // shown when the sidebar is collapsed
+    });
+    document.getElementById("newItemBtn").title = document.getElementById("newItemBtn").textContent;
+
     document.getElementById("taskQuickAddBtn").addEventListener("click", openNewTaskFromList);
+    document.getElementById("addStepBtn").addEventListener("click", addStepFromForm);
+    document.getElementById("stepWeeks").addEventListener("input", stepWeeksChanged);
+    document.getElementById("stepDue").addEventListener("change", stepDueChanged);
+    document.getElementById("stepStart").addEventListener("change", stepStartChanged);
+    ["stepName","stepStart","stepWeeks","stepDue"].forEach(function(id){
+      document.getElementById(id).addEventListener("keydown", function(e){
+        if (e.key === "Enter"){ e.preventDefault(); addStepFromForm(); }
+      });
+      document.getElementById(id).addEventListener("input", hideStepError);
+    });
+    document.getElementById("locationSearchBtn").addEventListener("click", searchLocation);
+    document.getElementById("locationAddress").addEventListener("keydown", function(e){
+      if (e.key === "Enter"){ e.preventDefault(); searchLocation(); }
+    });
+    document.getElementById("locationSaveBtn").addEventListener("click", saveLocation);
+    document.getElementById("locationCancelBtn").addEventListener("click", closeLocationModal);
+    document.getElementById("locationClearBtn").addEventListener("click", clearLocation);
+    document.getElementById("locationModalOverlay").addEventListener("click", function(e){ if (e.target === this) closeLocationModal(); });
     var titleInput = document.getElementById("taskTitle");
     titleInput.addEventListener("input", renderQuickPreview);
     titleInput.addEventListener("blur", applyTitleShortcuts);
@@ -2366,6 +3143,16 @@
 
     document.getElementById("taskClient").addEventListener("change", onTaskClientChange);
     document.getElementById("taskProject").addEventListener("change", onTaskProjectChange);
+    document.getElementById("meetingClient").addEventListener("change", function(){
+      populateProjectSelect("meetingProject", "meetingClient", document.getElementById("meetingProject").value);
+    });
+    document.getElementById("meetingProject").addEventListener("change", function(){
+      var pr = projects[this.value], clientSel = document.getElementById("meetingClient");
+      if (pr && pr.clientId && clients[pr.clientId] && !clientSel.value){
+        clientSel.value = pr.clientId;
+        populateProjectSelect("meetingProject", "meetingClient", this.value);
+      }
+    });
     document.getElementById("taskNewClientAddBtn").addEventListener("click", createClientFromTaskModal);
     document.getElementById("taskNewClientName").addEventListener("keydown", function(e){
       if (e.key === "Enter"){ e.preventDefault(); createClientFromTaskModal(); }
@@ -2449,7 +3236,7 @@
     });
     document.getElementById("expenseModalOverlay").addEventListener("click", function(e){ if (e.target === this) closeExpenseModal(); });
 
-    ["prioritySeg","statusSeg","projectStatusSeg","expenseCategorySeg","expensePaymentSeg","mealWithSeg"].forEach(function(segId){
+    ["prioritySeg","statusSeg","projectStatusSeg","expenseCategorySeg","expensePaymentSeg","mealWithSeg","clientTypeSeg"].forEach(function(segId){
       document.getElementById(segId).addEventListener("click", function(e){
         var btn = e.target.closest("button");
         if (!btn) return;
@@ -2471,15 +3258,29 @@
       document.getElementById("mealSupplierError").hidden = true;
     });
 
-    document.getElementById("manageClientsBtn").addEventListener("click", openClientsModal);
-    document.getElementById("closeClientsBtn").addEventListener("click", closeClientsModal);
-    document.getElementById("clientsModalOverlay").addEventListener("click", function(e){ if (e.target === this) closeClientsModal(); });
-    document.getElementById("addClientBtn").addEventListener("click", function(){
-      var input = document.getElementById("newClientName");
-      if (input.value.trim()){ addClient(input.value.trim()); input.value = ""; }
+    document.getElementById("addClientBtn").addEventListener("click", function(){ openClientModal(null); });
+    document.getElementById("clientsSearch").addEventListener("input", function(){
+      clientsSearchText = this.value;
+      renderClientsList();
     });
-    document.getElementById("newClientName").addEventListener("keydown", function(e){
-      if (e.key === "Enter" && this.value.trim()){ addClient(this.value.trim()); this.value = ""; }
+    Array.prototype.forEach.call(document.querySelectorAll("#clientsTypeFilter button"), function(b){
+      b.addEventListener("click", function(){
+        clientsTypeFilter = b.dataset.val;
+        Array.prototype.forEach.call(document.querySelectorAll("#clientsTypeFilter button"), function(x){ x.classList.toggle("active", x === b); });
+        renderClientsList();
+      });
+    });
+    document.getElementById("saveClientBtn").addEventListener("click", saveClientFromModal);
+    document.getElementById("cancelClientBtn").addEventListener("click", closeClientModal);
+    document.getElementById("clientLocationBtn").addEventListener("click", openClientFormLocation);
+    document.getElementById("clientModalOverlay").addEventListener("click", function(e){ if (e.target === this) closeClientModal(); });
+    document.getElementById("deleteClientBtn").addEventListener("click", function(){
+      var btn = document.getElementById("deleteClientBtn");
+      if (btn.dataset.confirming === "1"){ deleteClientFromModal(); }
+      else { btn.dataset.confirming = "1"; btn.textContent = "Confirmar eliminação?"; btn.classList.add("confirming"); }
+    });
+    ["clientName","clientNif","clientEmail"].forEach(function(id){
+      document.getElementById(id).addEventListener("input", function(){ document.getElementById(id + "Error").hidden = true; });
     });
 
     document.getElementById("exportBtn").addEventListener("click", exportData);
@@ -2523,7 +3324,8 @@
         if (!document.getElementById("projectModalOverlay").hidden) closeProjectModal();
         if (!document.getElementById("expenseModalOverlay").hidden) closeExpenseModal();
         if (!document.getElementById("dayExpensesModalOverlay").hidden) closeDayExpensesModal();
-        if (!document.getElementById("clientsModalOverlay").hidden) closeClientsModal();
+        if (!document.getElementById("locationModalOverlay").hidden){ closeLocationModal(); return; }
+        if (!document.getElementById("clientModalOverlay").hidden) closeClientModal();
       }
     });
   }

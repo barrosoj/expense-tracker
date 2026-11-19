@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://koqetdjtgecjpmckzeld.supabase.co https://cdn.jsdelivr.net https://tessdata.projectnaptha.com; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org; font-src 'self' data:; connect-src 'self' https://koqetdjtgecjpmckzeld.supabase.co https://cdn.jsdelivr.net https://tessdata.projectnaptha.com https://nominatim.openstreetmap.org; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
 <title>Quadro de Tarefas</title>
 <!-- iOS: torna possível "Adicionar ao ecrã principal" e abrir em ecrã inteiro, sem a barra do Safari -->
 <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -16,6 +16,7 @@
 <link rel="icon" type="image/svg+xml" href="brand/logo-simbolo.svg" />
 <link rel="icon" type="image/png" href="icon.png" />
 <link rel="manifest" href="manifest.webmanifest" />
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -72,7 +73,6 @@
     </div>
     <div class="topbar-actions">
       <button class="btn btn-primary" id="newItemBtn">+ Nova tarefa</button>
-      <button class="btn btn-ghost" id="manageClientsBtn">Gerir clientes</button>
       <details class="utility-menu" id="utilityMenu">
         <summary class="btn btn-ghost utility-menu-toggle" aria-label="Abrir menu de opções"><svg class="btn-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg><span>Opções</span></summary>
         <div class="utility-menu-panel">
@@ -95,7 +95,9 @@
     <button type="button" data-view="meetings"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg><span>Reuniões</span></button>
     <button type="button" data-view="projects"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 7A2.5 2.5 0 0 1 6 4.5h3.2l2 2.5H18A2.5 2.5 0 0 1 20.5 9.5V17a2.5 2.5 0 0 1-2.5 2.5H6A2.5 2.5 0 0 1 3.5 17z"/></svg><span>Projetos</span></button>
     <button type="button" data-view="expenses"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-2.5-1.6L13 21l-2.5-1.6L8 21l-2-1.3z"/><path d="M9 8h6M9 12h6M9 16h3"/></svg><span>Despesas</span></button>
+    <button type="button" data-view="clients"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.5 20v-1.5A3.5 3.5 0 0 0 12 15H7a3.5 3.5 0 0 0-3.5 3.5V20"/><circle cx="9.5" cy="8" r="3.5"/><path d="M20.5 20v-1.5a3.5 3.5 0 0 0-2.6-3.4M15.5 4.6a3.5 3.5 0 0 1 0 6.8"/></svg><span>Clientes</span></button>
   </nav>
+  <button type="button" class="sidebar-toggle" id="sidebarToggle" aria-label="Esconder a barra lateral" title="Esconder a barra lateral"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M9.5 4v16"/><path d="m15.5 10-2 2 2 2"/></svg><span>Esconder barra</span></button>
   </div>
 
   <div class="banner warn" id="storageWarning" hidden>
@@ -135,6 +137,15 @@
     <section class="home-brands">
       <h2 class="home-brands-title">Compras por marca</h2>
       <ul class="home-brand-list" id="homeBrandList"></ul>
+    </section>
+
+    <section class="home-map-card">
+      <div class="home-map-head">
+        <h2 class="home-brands-title">Clientes no mapa</h2>
+        <span class="home-map-count" id="homeMapCount"></span>
+      </div>
+      <div class="home-map" id="homeMap" role="region" aria-label="Mapa dos clientes"></div>
+      <p class="hint home-map-hint" id="homeMapHint" hidden></p>
     </section>
 
     <div class="home-files" id="homeFilesStatus" hidden>
@@ -178,6 +189,20 @@
     <div class="projects-list" id="projectsList"></div>
     <button type="button" class="btn btn-ghost btn-block" id="addProjectBottomBtn">+ Novo projeto</button>
   </div>
+
+  <section class="clients-view" id="clientsView" hidden>
+    <div class="clients-toolbar">
+      <input type="search" id="clientsSearch" class="clients-search" maxlength="60" autocomplete="off" placeholder="Procurar por nome, contacto, setor ou morada…" aria-label="Procurar cliente" />
+      <div class="segmented clients-type-filter" id="clientsTypeFilter" role="group" aria-label="Mostrar">
+        <button type="button" data-val="todos" class="active">Todos</button>
+        <button type="button" data-val="cliente">Clientes</button>
+        <button type="button" data-val="potencial">Potenciais</button>
+      </div>
+      <button type="button" class="btn btn-primary" id="addClientBtn">+ Novo cliente</button>
+    </div>
+    <div class="clients-list" id="clientsList"></div>
+    <p class="hint">Eliminar um cliente não apaga tarefas, reuniões, projetos ou despesas associados — ficam marcados como "Sem cliente".</p>
+  </section>
 
   <div class="expenses-view" id="expensesView" hidden>
     <div class="expenses-toolbar">
@@ -286,9 +311,15 @@
       </div>
     </div>
 
-    <div class="field">
-      <label for="meetingClient">Cliente</label>
-      <select id="meetingClient"></select>
+    <div class="field-row">
+      <div class="field">
+        <label for="meetingClient">Cliente</label>
+        <select id="meetingClient"></select>
+      </div>
+      <div class="field">
+        <label for="meetingProject">Projeto <span class="hint-inline">— opcional</span></label>
+        <select id="meetingProject"></select>
+      </div>
     </div>
 
     <div class="field">
@@ -352,6 +383,20 @@
     <div class="field">
       <label for="projectDescription">Descrição</label>
       <textarea id="projectDescription" maxlength="1500" placeholder="Objetivo do projeto, âmbito, notas..."></textarea>
+    </div>
+
+    <div class="field">
+      <label>Cronograma <span class="hint-inline">— etapas com prazo de entrega</span></label>
+      <div class="schedule-chart" id="scheduleChart"></div>
+      <div class="schedule-list" id="scheduleList"></div>
+      <div class="schedule-add">
+        <input type="text" id="stepName" maxlength="140" autocomplete="off" placeholder="Nova etapa ou ação… ex.: Enviar amostras" aria-label="Nova etapa" />
+        <label class="schedule-date"><span>Início</span><input type="date" id="stepStart" /></label>
+        <label class="schedule-date schedule-weeks"><span>Prazo em semanas</span><input type="number" id="stepWeeks" min="1" max="520" step="1" inputmode="numeric" placeholder="Ex: 6" /></label>
+        <label class="schedule-date"><span>Prazo de entrega</span><input type="date" id="stepDue" /></label>
+        <button type="button" class="btn btn-ghost btn-sm" id="addStepBtn">Adicionar</button>
+      </div>
+      <p class="field-error" id="stepError" hidden></p>
     </div>
 
     <div class="field">
@@ -532,24 +577,104 @@
   </div>
 </div>
 
-<div class="modal-overlay" id="clientsModalOverlay" hidden>
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="clientsModalTitle">
-    <h2 id="clientsModalTitle">Gerir clientes</h2>
-    <div class="clients-list" id="clientsList"></div>
-    <div class="client-add-row">
-      <input type="text" id="newClientName" maxlength="60" placeholder="Nome do novo cliente" />
-      <button class="btn btn-primary btn-sm" id="addClientBtn">Adicionar</button>
+<div class="modal-overlay" id="clientModalOverlay" hidden>
+  <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="clientModalTitle">
+    <h2 id="clientModalTitle">Novo cliente</h2>
+
+    <div class="field">
+      <label for="clientName">Nome</label>
+      <input type="text" id="clientName" maxlength="80" autocomplete="off" placeholder="Ex: Metalúrgica Silva, Lda" />
+      <p class="field-error" id="clientNameError" hidden>Indica o nome do cliente.</p>
     </div>
-    <p class="hint">Eliminar um cliente não apaga tarefas, reuniões ou projetos associados — ficam marcados como "Sem cliente".</p>
+
+    <div class="field">
+      <label>Tipo</label>
+      <div class="segmented" id="clientTypeSeg" data-value="cliente">
+        <button type="button" data-val="cliente">Cliente</button>
+        <button type="button" data-val="potencial">Potencial cliente</button>
+      </div>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="clientNif">NIF <span class="hint-inline">— opcional</span></label>
+        <input type="text" id="clientNif" maxlength="20" inputmode="numeric" autocomplete="off" placeholder="Ex: 501234567" />
+        <p class="field-error" id="clientNifError" hidden>Este NIF português não é válido.</p>
+      </div>
+      <div class="field">
+        <label for="clientSector">Setor <span class="hint-inline">— opcional</span></label>
+        <input type="text" id="clientSector" maxlength="60" list="clientSectorList" autocomplete="off" placeholder="Ex: Moldes" />
+        <datalist id="clientSectorList"></datalist>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="clientContact">Pessoa de contacto <span class="hint-inline">— opcional</span></label>
+      <input type="text" id="clientContact" maxlength="80" autocomplete="off" placeholder="Ex: Eng. João Ferreira (Compras)" />
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="clientPhone">Telefone <span class="hint-inline">— opcional</span></label>
+        <input type="text" id="clientPhone" maxlength="30" inputmode="tel" autocomplete="off" placeholder="Ex: 912 345 678" />
+      </div>
+      <div class="field">
+        <label for="clientEmail">Email <span class="hint-inline">— opcional</span></label>
+        <input type="text" id="clientEmail" maxlength="120" inputmode="email" autocomplete="off" placeholder="Ex: compras@empresa.pt" />
+        <p class="field-error" id="clientEmailError" hidden>Este email não parece válido.</p>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Localização <span class="hint-inline">— opcional</span></label>
+      <button type="button" class="client-location client-location-wide" id="clientLocationBtn"></button>
+    </div>
+
+    <div class="field">
+      <label>Cor</label>
+      <div class="swatch-picker" id="clientColorPicker"></div>
+    </div>
+
+    <div class="field">
+      <label for="clientNotes">Notas <span class="hint-inline">— opcional</span></label>
+      <textarea id="clientNotes" maxlength="1500" placeholder="Condições, horários de entrega, observações…"></textarea>
+    </div>
+
     <div class="modal-actions">
-      <div></div>
-      <button class="btn btn-ghost" id="closeClientsBtn">Fechar</button>
+      <button type="button" class="btn btn-danger" id="deleteClientBtn" hidden>Eliminar</button>
+      <div class="modal-actions-right">
+        <button type="button" class="btn btn-ghost" id="cancelClientBtn">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="saveClientBtn">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="locationModalOverlay" hidden>
+  <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="locationModalTitle">
+    <h2 id="locationModalTitle">Localização do cliente</h2>
+    <div class="field">
+      <label for="locationAddress">Morada</label>
+      <div class="actions-add">
+        <input type="text" id="locationAddress" maxlength="160" autocomplete="off" placeholder="Ex: Rua das Flores 10, Leiria" />
+        <button type="button" class="btn btn-ghost btn-sm" id="locationSearchBtn">Procurar</button>
+      </div>
+      <p class="hint" id="locationStatus">Procura a morada ou clica no mapa para marcar o local. Podes arrastar o pino.</p>
+    </div>
+    <div class="location-map" id="locationMap"></div>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-danger" id="locationClearBtn">Remover localização</button>
+      <div class="modal-actions-right">
+        <button type="button" class="btn btn-ghost" id="locationCancelBtn">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="locationSaveBtn">Guardar</button>
+      </div>
     </div>
   </div>
 </div>
 
 <script src="config.js"></script>
 <script src="vendor/supabase.js"></script>
+<script src="vendor/leaflet/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" integrity="sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F" crossorigin="anonymous"></script>
 <script src="receipt.js"></script>
 <script src="xlsx-reader.js"></script>
