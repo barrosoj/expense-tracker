@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so the app works offline once loaded.
 // Bump CACHE_VERSION whenever an app-shell file changes.
-var CACHE_VERSION = "v50";
+var CACHE_VERSION = "v51";
 var CACHE_NAME = "quadro-tarefas-" + CACHE_VERSION;
 var APP_SHELL = [
   "./",
@@ -13,6 +13,7 @@ var APP_SHELL = [
   "./receipt.js",
   "./xlsx-reader.js",
   "./excel-writer.js",
+  "./drive.js",
   "./app.js",
   "./sync.js",
   "./auth.js",

@@ -15,5 +15,11 @@ window.APP_CONFIG = {
   emailLogin: false,
 
   // false = the email-code form never creates accounts (only used when emailLogin is true).
-  allowEmailSignUp: false
+  allowEmailSignUp: false,
+
+  // Google Drive folder that holds the Excel files (sub-folders Compras, Vendas, Despesas).
+  // googleClientId: OAuth "Web application" client from Google Cloud (Drive API enabled),
+  // with redirect URIs .../drive-auth.html. Not a secret. Leave empty to turn Drive off.
+  googleClientId: "848741391394-dbb13qqche8cq6ri01dn66am0oib9u6v.apps.googleusercontent.com",
+  googleDriveFolderId: "1rT1q2nSewo-kvlWPzjKplmEXXI5WwcgC"
 };

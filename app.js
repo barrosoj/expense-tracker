@@ -493,11 +493,12 @@
   // The Excel files live in the "Compras" and "Vendas" folders next to the app on this computer
   // (they are git-ignored, so never on GitHub). The app only reads them; it never changes or sends them.
   // They are found only when the app is opened from this computer (local server on the project folder).
+  // Purchases and my sales are read from the Excel files in the Google Drive folder
+  // (sub-folders Compras and Vendas). Nothing is read from this device's disk.
   var DATA_FOLDERS = { compra:["Compras","Compra"], venda:["Vendas","Venda"] };
-  var FOLDER_DATA_LOCAL = /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname);
-  var NOT_LOCAL_HINT = "Disponível só no computador (lido das pastas locais)";
   var KIND_LABEL = { compra:"compras", venda:"vendas" };
   var folderLoad = null;
+  var DRIVE_HINT = "Liga ao Google Drive para ver este valor";
 
   function setHomeImportStatus(kind, message, isError){
     var s = document.getElementById(kind === "venda" ? "homeSaleStatus" : "homePurchaseStatus");
@@ -508,43 +509,32 @@
       !document.querySelector("#homeFilesStatus .home-import-status.error");
   }
 
-  function isDataFileName(name){ return /\.(xlsx|csv)$/i.test(name) && name.indexOf("~$") !== 0; }
+  function driveReady(){ return !!(window.QuadroDrive && window.QuadroDrive.connected()); }
 
-  // Looks for the first Excel/CSV file in the kind's folder. Uses the folder listing when the
-  // local server provides one, else tries "<Pasta>/<Pasta>.xlsx" (e.g. Compras/Compras.xlsx).
-  function findFolderFile(kind){
-    var folders = DATA_FOLDERS[kind];
-    function tryFolder(i){
-      if (i >= folders.length) return Promise.resolve(null);
-      var folder = folders[i];
-      return fetch(folder + "/", { cache:"no-store" }).then(function(res){
-        if (!res.ok || (res.headers.get("content-type") || "").indexOf("text/html") < 0) return null;
-        return res.text().then(function(html){
-          var doc = new DOMParser().parseFromString(html, "text/html");
-          var names = Array.prototype.map.call(doc.querySelectorAll("a[href]"), function(a){
-            var href = a.getAttribute("href").split(/[?#]/)[0];
-            try { href = decodeURIComponent(href); } catch(e){}
-            return href.split("/").pop();
-          }).filter(isDataFileName).sort();
-          return names.length ? folder + "/" + names[0] : null;
-        });
-      }).catch(function(){ return null; }).then(function(found){
-        if (found) return found;
-        var guess = folder + "/" + folder + ".xlsx";
-        return fetch(guess, { method:"HEAD", cache:"no-store" })
-          .then(function(res){ return res.ok ? guess : null; })
-          .catch(function(){ return null; });
-      }).then(function(found){ return found || tryFolder(i + 1); });
-    }
-    return tryFolder(0);
+  // "Ligar ao Google Drive" banner: shown while the Drive folder is configured but not connected.
+  function updateDriveBanner(){
+    var b = document.getElementById("driveConnectBanner");
+    var D = window.QuadroDrive;
+    b.hidden = !(D && D.configured() && !D.connected());
   }
 
-  function readFolderFile(path){
-    return fetch(path.split("/").map(encodeURIComponent).join("/"), { cache:"no-store" }).then(function(res){
-      if (!res.ok) throw new Error("não foi possível abrir " + path);
-      if (/\.csv$/i.test(path)) return res.text().then(parseCsvText);
+  // First spreadsheet (by name) in the kind's Drive sub-folder, or null.
+  function findFolderFile(kind){
+    var D = window.QuadroDrive;
+    return D.findFolder(DATA_FOLDERS[kind], false).then(function(folderId){
+      if (!folderId) return null;
+      return D.listChildren(folderId).then(function(files){
+        var sheets = files.filter(function(f){ return D.isSpreadsheet(f) && f.name.indexOf("~$") !== 0; });
+        return sheets.length ? sheets[0] : null;
+      });
+    });
+  }
+
+  function readFolderFile(file){
+    return window.QuadroDrive.download(file).then(function(buf){
+      if (/\.csv$/i.test(file.name)) return parseCsvText(new TextDecoder("utf-8").decode(buf));
       if (!window.QuadroXlsx) throw new Error("leitor de Excel indisponível");
-      return res.arrayBuffer().then(window.QuadroXlsx.read).then(function(r){ return r.rows; });
+      return window.QuadroXlsx.read(buf).then(function(r){ return r.rows; });
     });
   }
 
@@ -560,28 +550,28 @@
   }
 
   function loadKind(kind){
-    return findFolderFile(kind).then(function(path){
-      if (!path){
-        setHomeImportStatus(kind, "Sem ficheiro na pasta " + DATA_FOLDERS[kind][0] + ".", false);
+    return findFolderFile(kind).then(function(file){
+      if (!file){
+        setHomeImportStatus(kind, "Sem ficheiro na pasta " + DATA_FOLDERS[kind][0] + " do Google Drive.", false);
         return;
       }
-      return readFolderFile(path).then(function(rows){
+      return readFolderFile(file).then(function(rows){
         var parsed = kind === "venda" ? parseMySalesRows(rows) : parsePurchaseRows(rows);
         applyParsed(kind, parsed);
         var d = new Date();
-        setHomeImportStatus(kind, "Valores de " + path + " (lido às " + String(d.getHours()).padStart(2,"0") + ":" +
+        setHomeImportStatus(kind, "Valores de " + file.name + " (lido às " + String(d.getHours()).padStart(2,"0") + ":" +
           String(d.getMinutes()).padStart(2,"0") + (parsed.year ? ", meses de " + parsed.year : "") + ").", false);
       });
     }).catch(function(e){
+      if (e && e.notConnected){ updateDriveBanner(); return; }
       setHomeImportStatus(kind, "Não foi possível ler o ficheiro de " + KIND_LABEL[kind] + ": " + (e && e.message ? e.message : e) + ".", true);
     });
   }
 
   // Re-reads both folders (on start and every time "Início" is opened), so edits to the Excel files show up.
   function loadFolderData(){
-    // The Compras/Vendas folders only exist on the PC (local server); elsewhere (phone, GitHub
-    // Pages) there is nothing to read, so skip the lookups instead of logging 404 errors.
-    if (!FOLDER_DATA_LOCAL) return Promise.resolve();
+    updateDriveBanner();
+    if (!driveReady()) return Promise.resolve();
     if (folderLoad) return folderLoad;
     salesData = {};
     mySales = {};
@@ -613,7 +603,7 @@
     document.getElementById("homeSaleValue").textContent = hasSale ? formatCurrency(sale) : "—";
     document.getElementById("homeSaleHint").textContent = hasSale
       ? "As minhas vendas em " + monthLabel(homeMonth)
-      : (FOLDER_DATA_LOCAL ? "Sem valor de venda para este mês" : NOT_LOCAL_HINT);
+      : (driveReady() ? "Sem valor de venda para este mês" : DRIVE_HINT);
 
     var rows = brands.map(function(b){
       var entry = monthData[findBrandKey(monthData, b)];
@@ -629,7 +619,7 @@
     document.getElementById("homePurchaseValue").textContent = brandsWithBuy ? formatCurrency(totalBuy) : "—";
     document.getElementById("homePurchaseHint").textContent = brandsWithBuy
       ? "Soma de " + brandsWithBuy + " marca(s) em " + monthLabel(homeMonth)
-      : (FOLDER_DATA_LOCAL ? "Sem valores de compra para este mês" : NOT_LOCAL_HINT);
+      : (driveReady() ? "Sem valores de compra para este mês" : DRIVE_HINT);
 
     // Brands with a value first (largest first), then the ones without a value.
     rows.sort(function(a, b){
@@ -640,8 +630,8 @@
     });
     var list = document.getElementById("homeBrandList");
     list.innerHTML = "";
-    // Per-brand purchases come only from the PC's Compras folder: hide the empty card elsewhere.
-    list.parentNode.hidden = !FOLDER_DATA_LOCAL;
+    // Per-brand purchases come from the Drive's Compras folder: hide the empty card until connected.
+    list.parentNode.hidden = !driveReady();
     rows.forEach(function(r){
       var li = el("li", "home-brand-row" + (r.compra === null ? " is-empty" : ""));
       var name = el("span", "home-brand-name");
@@ -2071,7 +2061,6 @@
   //   "Combustiveis AAAA-MM.xlsx" — fleet-card fuel of that month
   // A file is only rewritten when its expenses changed (fingerprint kept on this device).
   var EXCEL_COLUMN = { viatura:"D", material:"E", combustivel:"F", almocos:"G", jantares:"H", refeicoes:"I", estadias:"J", parques:"L", portagens:"M", outros:"N" };
-  var excelWriterAvailable = null; // null = not checked yet
   var excelSyncTimer = null, excelSyncRunning = false, excelSyncAgain = false;
   var EXCEL_SIG_KEY = "qt_excel_sig";
   var excelFilesSeen = {}; // output files confirmed to exist in the folder during this session
@@ -2083,22 +2072,16 @@
     s.hidden = !text;
     s.textContent = text || "";
     s.classList.toggle("error", !!isError);
-    document.getElementById("excelSyncRetryBtn").hidden = !showRetry;
+    var retry = document.getElementById("excelSyncRetryBtn");
+    retry.hidden = !showRetry;
+    retry.textContent = window.QuadroDrive && !window.QuadroDrive.connected() ? "Ligar ao Google Drive" : "Gravar Excel agora";
   }
 
+  // The Excel files are written to the "Despesas" sub-folder of the Google Drive folder.
   function checkExcelWriter(){
-    if (excelWriterAvailable !== null) return Promise.resolve(excelWriterAvailable);
-    if (!/^(127\.0\.0\.1|localhost)$/.test(location.hostname) || !window.QuadroExcel){
-      excelWriterAvailable = false;
-      return Promise.resolve(false);
-    }
-    return fetch("api/estado", { cache:"no-store" }).then(function(r){
-      return r.ok ? r.json() : null;
-    }).then(function(j){
-      excelWriterAvailable = !!(j && j.gravarExcel);
-      return excelWriterAvailable;
-    }).catch(function(){ excelWriterAvailable = false; return false; });
+    return Promise.resolve(!!(window.QuadroExcel && window.QuadroDrive && window.QuadroDrive.configured()));
   }
+  function despesasFolder(){ return window.QuadroDrive.findFolder(["Despesas"], true); }
 
   function scheduleExcelSync(){
     clearTimeout(excelSyncTimer);
@@ -2144,21 +2127,16 @@
   }
 
   function fetchTemplate(name){
-    return fetch("Despesas/" + encodeURIComponent(name), { cache:"no-store" }).then(function(r){
-      if (!r.ok) throw new Error("falta o modelo " + name + " na pasta Despesas");
-      return r.arrayBuffer();
+    return despesasFolder().then(function(folderId){
+      return window.QuadroDrive.listChildren(folderId);
+    }).then(function(files){
+      var f = files.filter(function(x){ return x.name === name; })[0];
+      if (!f) throw new Error("falta o modelo " + name + " na pasta Despesas do Google Drive");
+      return window.QuadroDrive.download(f);
     });
   }
   function putExcel(name, bytes){
-    return fetch("Despesas/" + encodeURIComponent(name), {
-      method:"PUT", body:bytes,
-      headers:{ "Content-Type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
-    }).then(function(r){
-      if (r.ok) return;
-      return r.json().catch(function(){ return {}; }).then(function(j){
-        throw new Error(j.erro || ("erro " + r.status + " ao gravar " + name));
-      });
-    });
+    return despesasFolder().then(function(folderId){ return window.QuadroDrive.upload(folderId, name, bytes); });
   }
 
   function runExcelSync(force){
@@ -2181,7 +2159,13 @@
         if (!templates[name]) templates[name] = fetchTemplate(name);
         return templates[name];
       }
-      var written = [], errors = [];
+      var namesInDrive = null;
+      function driveNames(){
+        if (!namesInDrive) namesInDrive = despesasFolder().then(function(id){ return window.QuadroDrive.listChildren(id); })
+          .then(function(files){ var m = {}; files.forEach(function(f){ m[f.name] = true; }); return m; });
+        return namesInDrive;
+      }
+      var written = [], errors = [], needDrive = false;
       var names = Object.keys(outputs).sort();
       var chain = Promise.resolve();
       names.forEach(function(name){
@@ -2194,9 +2178,10 @@
           var needed;
           if (force || sigs[name] !== sig) needed = Promise.resolve(true);
           else if (excelFilesSeen[name]) needed = Promise.resolve(false);
-          else needed = fetch("Despesas/" + encodeURIComponent(name), { method:"HEAD", cache:"no-store" })
-            .then(function(r){ if (r.ok) excelFilesSeen[name] = true; return !r.ok; })
-            .catch(function(){ return false; });
+          else needed = driveNames().then(function(present){
+            if (present[name]) excelFilesSeen[name] = true;
+            return !present[name];
+          }).catch(function(){ return false; });
           return needed.then(function(yes){
             if (!yes) return;
             return template(tplName).then(function(tpl){
@@ -2208,15 +2193,22 @@
               excelFilesSeen[name] = true;
               written.push(name);
             });
-          }).catch(function(e){ errors.push(e && e.message ? e.message : String(e)); });
+          }).catch(function(e){
+            if (e && e.notConnected) needDrive = true;
+            else errors.push(e && e.message ? e.message : String(e));
+          });
         });
       });
       return chain.then(function(){
         try { localStorage.setItem(sigKey, JSON.stringify(sigs)); } catch(e){}
         var d = new Date(), at = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
-        if (errors.length) setExcelStatus("Excel não atualizado: " + errors[0], true, true);
+        if (needDrive){
+          updateDriveBanner();
+          setExcelStatus("Despesas por gravar no Excel: liga ao Google Drive.", true, true);
+        }
+        else if (errors.length) setExcelStatus("Excel não atualizado: " + errors[0], true, true);
         else if (written.length) setExcelStatus("Excel atualizado às " + at + ": " + written.join(", "), false, false);
-        else if (names.length) setExcelStatus("Excel em dia (pasta Despesas).", false, false);
+        else if (names.length) setExcelStatus("Excel em dia (pasta Despesas do Google Drive).", false, false);
         else setExcelStatus("", false, false);
       });
     }).then(function(){
@@ -3291,7 +3283,11 @@
         }
       });
     });
-    document.getElementById("excelSyncRetryBtn").addEventListener("click", function(){ runExcelSync(true); });
+    document.getElementById("excelSyncRetryBtn").addEventListener("click", function(){
+      if (window.QuadroDrive && !window.QuadroDrive.connected()) window.QuadroDrive.connect();
+      else runExcelSync(true);
+    });
+    document.getElementById("driveConnectBtn").addEventListener("click", function(){ window.QuadroDrive.connect(); });
     document.getElementById("expenseAmount").addEventListener("input", function(){
       document.getElementById("expenseAmountError").hidden = true;
     });
