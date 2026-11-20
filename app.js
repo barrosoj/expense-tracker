@@ -3227,6 +3227,15 @@
     setVisitsStatus(cut ? "O Google Maps aceita até 10 paragens: abri as 10 primeiras." : "", false);
   }
 
+  // Waze takes one destination at a time: the next visit still to do (in plan order).
+  function openNextInWaze(){
+    var next = visitIdsFor(visitsDay).filter(function(id){ return !meetings[id].visit.done && wazeUrl(id); })[0];
+    if (!next){ setVisitsStatus("Não há visitas por fazer com localização ou morada.", true); return; }
+    openExternal(wazeUrl(next));
+    var c = visitClient(next);
+    setVisitsStatus("A abrir o Waze para " + (c ? c.name : "a próxima visita") + ". Depois da visita, marca-a como feita (✓) e volta a tocar para seguir para a seguinte.", false);
+  }
+
   function visitButton(cls, label, text, onClick){
     var b = el("button", "icon-btn visit-btn " + cls);
     b.type = "button"; b.textContent = text; b.title = label; b.setAttribute("aria-label", label);
@@ -3300,6 +3309,7 @@
 
     var pending = ids.filter(function(id){ return !meetings[id].visit.done; });
     document.getElementById("visitsRouteBtn").disabled = !pending.length;
+    document.getElementById("visitsWazeBtn").disabled = !pending.some(function(id){ return wazeUrl(id); });
     document.getElementById("visitsOptimizeBtn").disabled = pending.filter(visitPoint).length < 2;
     var doneN = ids.length - pending.length;
     var locIds = ids.filter(visitPoint);
@@ -3724,6 +3734,7 @@
     });
     document.getElementById("visitsOptimizeBtn").addEventListener("click", optimizeVisits);
     document.getElementById("visitsRouteBtn").addEventListener("click", openVisitsRoute);
+    document.getElementById("visitsWazeBtn").addEventListener("click", openNextInWaze);
     document.getElementById("homeNextMonthBtn").addEventListener("click", function(){ shiftHomeMonth(1); });
     document.getElementById("addMeetingBottomBtn").addEventListener("click", function(){ openMeetingModal(null); });
     document.getElementById("addProjectBottomBtn").addEventListener("click", function(){ openProjectModal(null); });
