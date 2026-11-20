@@ -1630,7 +1630,7 @@
       if (/[;"\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
       return s;
     }
-    var lines = ["Data;Categoria;Com quem;Cliente;Fornecedor;Descrição;Valor (€)"];
+    var lines = ["Data;Categoria;Com quem;Cliente;Fornecedor;Descrição;Valor (€);NIF vendedor;Documento;ATCUD;IVA (€)"];
     ids.forEach(function(id){
       var x = expenses[id];
       lines.push([
@@ -1640,7 +1640,11 @@
         csvField(clientName(x.clientId) || ""),
         csvField(x.supplier || ""),
         csvField(x.description || ""),
-        csvField((Number(x.amount)||0).toFixed(2).replace(".", ","))
+        csvField((Number(x.amount)||0).toFixed(2).replace(".", ",")),
+        csvField(x.invoice ? x.invoice.nif : ""),
+        csvField(x.invoice ? ((x.invoice.type || "") + " " + (x.invoice.number || "")).trim() : ""),
+        csvField(x.invoice ? x.invoice.atcud : ""),
+        csvField(x.invoice && x.invoice.vat ? Number(x.invoice.vat).toFixed(2).replace(".", ",") : "")
       ].join(";"));
     });
     var csv = lines.join("\r\n");
@@ -1894,6 +1898,7 @@
       supplier: document.getElementById("expenseSupplier").value.trim(),
       description: description,
       amount: amount,
+      invoice: invoiceDraft,
       updatedAt: Date.now()
     };
     if (isMealCategory(payload.category)){
@@ -2545,10 +2550,89 @@
     status.textContent = message;
     status.classList.toggle("error", !!isError);
   }
+  // ---------- invoice QR code (faturas portuguesas) ----------
+  // Fields of the invoice read from its QR code, kept with the expense: { nif, type, number, atcud, vat, total }.
+  var invoiceDraft = null;
+  var invoiceFallbackDescription = "";
+
+  function invoiceSummary(inv){
+    var parts = [inv.typeLabel || "Fatura"];
+    if (inv.number) parts[0] += " " + inv.number;
+    parts.push("NIF " + inv.nif);
+    parts.push("total " + formatCurrency(inv.total) + (inv.vat ? " (IVA " + formatCurrency(inv.vat) + ")" : ""));
+    return parts.join(" · ");
+  }
+  // Latest expense from the same seller (by NIF), to reuse its supplier name and description.
+  function knownSeller(nif){
+    var best = null;
+    Object.keys(expenses).forEach(function(id){
+      var x = expenses[id];
+      if (id === editingExpenseId || !x.invoice || x.invoice.nif !== nif) return;
+      if (!best || (x.updatedAt || 0) > (best.updatedAt || 0)) best = x;
+    });
+    return best;
+  }
+  function duplicateInvoice(inv){
+    var found = null;
+    Object.keys(expenses).forEach(function(id){
+      var x = expenses[id], o = x.invoice;
+      if (id === editingExpenseId || !o) return;
+      if ((inv.atcud && o.atcud === inv.atcud && o.nif === inv.nif) || (inv.number && o.nif === inv.nif && o.number === inv.number)) found = x;
+    });
+    return found;
+  }
+  function applyInvoice(inv){
+    invoiceDraft = { nif:inv.nif, type:inv.type, number:inv.number, atcud:inv.atcud, vat:inv.vat, total:inv.total };
+    document.getElementById("expenseDate").value = inv.date;
+    document.getElementById("expenseAmount").value = inv.total.toFixed(2).replace(".", ",");
+    document.getElementById("expenseAmountError").hidden = true;
+    var desc = document.getElementById("expenseDescription");
+    var seller = knownSeller(inv.nif);
+    invoiceFallbackDescription = "";
+    if (seller){
+      if (seller.description) desc.value = seller.description;
+      var sup = document.getElementById("expenseSupplier");
+      if (seller.supplier && !sup.value) sup.value = seller.supplier;
+    } else if (!desc.value.trim()){
+      invoiceFallbackDescription = inv.typeLabel + (inv.number ? " " + inv.number : "");
+      desc.value = invoiceFallbackDescription;
+    }
+    var msg = "Lido pelo código QR: " + invoiceSummary(inv) + ".";
+    if (!inv.nifValid) msg += " Atenção: o NIF do vendedor não é válido, confirma os dados.";
+    if (inv.type === "NC") msg += " É uma nota de crédito (devolução), não uma despesa.";
+    var dup = duplicateInvoice(inv);
+    if (dup) msg += " Esta fatura já foi registada em " + formatDateShort(dup.date) + ".";
+    setReceiptScanStatus(msg, !!dup || !inv.nifValid || inv.type === "NC");
+    return !!seller;
+  }
+
+  // A photo is first searched for the invoice QR code (exact, offline); OCR is the fallback and,
+  // after a QR read of an unknown seller, only suggests the shop name for the description.
   function scanReceipt(file){
     var button = document.getElementById("scanReceiptBtn");
     button.disabled = true;
-    setReceiptScanStatus("A preparar a leitura do recibo…", false);
+    setReceiptScanStatus("A procurar o código QR da fatura…", false);
+    var qr = window.QuadroInvoiceQR ? window.QuadroInvoiceQR.scan(file).catch(function(err){
+      console.warn("invoice QR scan failed", err);
+      return null;
+    }) : Promise.resolve(null);
+    return qr.then(function(inv){
+      if (!inv) return ocrReceipt(file, false);
+      var known = applyInvoice(inv);
+      if (known || !window.ReceiptScanner) return;
+      var qrStatus = document.getElementById("receiptScanStatus");
+      var keep = { text:qrStatus.textContent, error:qrStatus.classList.contains("error") };
+      return window.ReceiptScanner.scan(file).then(function(s){
+        var desc = document.getElementById("expenseDescription");
+        if (s && s.description && desc.value === invoiceFallbackDescription) desc.value = s.description;
+      }).catch(function(){}).then(function(){ setReceiptScanStatus(keep.text, keep.error); });
+    }).then(function(){
+      button.disabled = false;
+    });
+  }
+
+  function ocrReceipt(file){
+    setReceiptScanStatus("Sem código QR legível; a ler o texto do recibo…", false);
     return window.ReceiptScanner.scan(file, function(progress){
       if (!progress || !progress.status) return;
       var labels = {
@@ -2576,8 +2660,6 @@
     }).catch(function(error){
       console.error("receipt scan failed", error);
       setReceiptScanStatus(error && error.message ? error.message : "Não foi possível ler o recibo. Podes preencher manualmente.", true);
-    }).then(function(){
-      button.disabled = false;
     });
   }
 
@@ -2597,6 +2679,7 @@
       document.getElementById("expenseDescription").value = x.description || "";
       fillFuelFields(x);
       fillMealFields(x);
+      invoiceDraft = x.invoice || null;
       deleteBtn.hidden = false;
       resetConfirm(deleteBtn, "Eliminar");
     } else {
@@ -2609,9 +2692,13 @@
       document.getElementById("expenseDescription").value = "";
       fillFuelFields(null);
       fillMealFields(null);
+      invoiceDraft = null;
       deleteBtn.hidden = true;
     }
-    setReceiptScanStatus("A foto sugere os campos; confirma ou edita antes de guardar.", false);
+    invoiceFallbackDescription = "";
+    setReceiptScanStatus(invoiceDraft
+      ? "Fatura associada: " + invoiceSummary(invoiceDraft) + "."
+      : "A foto lê o código QR da fatura (ou o texto do talão); confirma antes de guardar.", false);
     document.getElementById("expenseAmountError").hidden = true;
     overlay.hidden = false;
     setTimeout(function(){ document.getElementById("expenseAmount").focus(); }, 0);

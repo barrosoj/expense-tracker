@@ -443,9 +443,9 @@
     </div>
 
     <div class="receipt-scan field">
-      <button type="button" class="btn btn-ghost btn-sm" id="scanReceiptBtn">Fotografar recibo</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="scanReceiptBtn">Fotografar fatura</button>
       <input type="file" id="receiptFileInput" accept="image/*" capture="environment" hidden />
-      <span class="receipt-scan-status" id="receiptScanStatus" role="status" aria-live="polite">A foto sugere os campos; confirma ou edita antes de guardar.</span>
+      <span class="receipt-scan-status" id="receiptScanStatus" role="status" aria-live="polite">A foto lê o código QR da fatura (ou o texto do talão); confirma antes de guardar.</span>
     </div>
 
     <div class="field">
@@ -684,6 +684,7 @@
 <script src="vendor/leaflet/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" integrity="sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F" crossorigin="anonymous"></script>
 <script src="receipt.js"></script>
+<script src="invoice-qr.js"></script>
 <script src="xlsx-reader.js"></script>
 <script src="excel-writer.js"></script>
 <script src="drive.js"></script>
