@@ -898,6 +898,8 @@ table.expenses-table{ width:100%; min-width:600px; border-collapse:collapse; fon
 .visit-name{ border:none; background:none; padding:0; font:inherit; font-weight:600; font-size:14px; color:var(--text); cursor:pointer; text-align:left; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; }
 .visit-name:hover{ color:var(--accent); }
 .visit-sub{ font-size:12px; color:var(--text-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.visit-leg{ font-size:12px; color:var(--text-muted); }
+.visit-leg:empty{ display:none; }
 .visit-actions{ flex:none; display:flex; gap:2px; }
 .visit-btn{ width:30px; height:30px; font-size:14px; }
 .visit-check.is-set{ color:var(--success); }

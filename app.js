@@ -2984,6 +2984,56 @@
     return km;
   }
   function formatKm(km){ return km < 10 ? km.toFixed(1).replace(".", ",") : String(Math.round(km)); }
+  function formatMin(min){
+    min = Math.round(min);
+    return min < 60 ? min + " min" : Math.floor(min / 60) + " h " + String(min % 60).padStart(2, "0");
+  }
+
+  // Road distances and times come from OSRM (OpenStreetMap routing, router.project-osrm.org).
+  // Only the visits' coordinates are sent — never client names. Offline or on error the plan
+  // falls back to straight-line distances and says so.
+  var OSRM = "https://router.project-osrm.org/";
+  var roadCache = {};
+  function osrmCoords(points){
+    return points.map(function(p){ return p.lng.toFixed(5) + "," + p.lat.toFixed(5); }).join(";");
+  }
+  function osrmGet(path){
+    var ctrl = window.AbortController ? new AbortController() : null;
+    var timer = setTimeout(function(){ if (ctrl) ctrl.abort(); }, 12000);
+    return fetch(OSRM + path, ctrl ? { signal: ctrl.signal } : {}).then(function(res){
+      if (!res.ok) throw new Error("serviço de rotas respondeu " + res.status);
+      return res.json();
+    }).then(function(j){
+      if (!j || j.code !== "Ok") throw new Error("rota não encontrada");
+      return j;
+    }).finally(function(){ clearTimeout(timer); });
+  }
+  function num(v){ v = Number(v); return isFinite(v) && v >= 0 ? v : null; }
+  // Route through `points` in that order: { km, min, legs:[{km,min}], line:[[lat,lng],…] }
+  function roadRoute(points){
+    var key = "r:" + osrmCoords(points);
+    if (roadCache[key]) return roadCache[key];
+    var p = osrmGet("route/v1/driving/" + osrmCoords(points) + "?overview=full&geometries=geojson&steps=false").then(function(j){
+      var r = j.routes && j.routes[0];
+      if (!r || num(r.distance) == null || !r.geometry || !Array.isArray(r.geometry.coordinates)) throw new Error("rota inválida");
+      return {
+        km: r.distance / 1000, min: (num(r.duration) || 0) / 60,
+        legs: (r.legs || []).map(function(l){ return { km: (num(l.distance) || 0) / 1000, min: (num(l.duration) || 0) / 60 }; }),
+        line: r.geometry.coordinates.filter(function(c){ return Array.isArray(c) && isFinite(c[0]) && isFinite(c[1]); })
+          .map(function(c){ return [Number(c[1]), Number(c[0])]; })
+      };
+    });
+    roadCache[key] = p;
+    p.catch(function(){ delete roadCache[key]; });
+    return p;
+  }
+  // Driving-time matrix (minutes) between all `points`; null where there is no road.
+  function roadMatrix(points){
+    return osrmGet("table/v1/driving/" + osrmCoords(points) + "?annotations=duration").then(function(j){
+      if (!Array.isArray(j.durations) || j.durations.length !== points.length) throw new Error("tabela inválida");
+      return j.durations.map(function(row){ return (row || []).map(function(v){ v = num(v); return v == null ? null : v / 60; }); });
+    });
+  }
   function setVisitsStatus(text, isError){
     var s = document.getElementById("visitsStatus");
     s.textContent = text || "";
@@ -3040,26 +3090,53 @@
     saveStore(); setVisitsStatus("", false); renderVisits();
   }
 
-  // Nearest neighbour from the start, then 2-opt, on straight-line distances.
-  function bestOrder(start, stops){
-    var left = stops.slice(), path = [], cur = start;
+  // Shortest open path over nodes 0..n-1 by `cost(i, j)`: nearest neighbour, then 2-opt.
+  // With a start (node 0 = where the phone is) the path begins there; node 0 isn't returned.
+  function bestOrder(n, hasStart, cost){
+    var start = hasStart ? 0 : null, left = [], path = [], cur = start;
+    for (var k = hasStart ? 1 : 0; k < n; k++) left.push(k);
+    if (!hasStart && left.length){
+      // No start: begin at the stop whose nearest-neighbour tour is shortest.
+      var best = null;
+      left.forEach(function(first){
+        var cand = bestOrderFrom(first, left.filter(function(x){ return x !== first; }), cost);
+        if (!best || pathCost(null, cand, cost) < pathCost(null, best, cost)) best = cand;
+      });
+      return twoOpt(null, best, cost);
+    }
     while (left.length){
       var bi = 0, bd = Infinity;
       for (var i = 0; i < left.length; i++){
-        var d = cur ? haversineKm(cur, left[i].p) : 0;
+        var d = cost(cur, left[i]);
         if (d < bd){ bd = d; bi = i; }
       }
-      cur = left[bi].p;
+      cur = left[bi];
       path.push(left.splice(bi, 1)[0]);
     }
-    function len(arr){ return pathKm((start ? [start] : []).concat(arr.map(function(s){ return s.p; }))); }
+    return twoOpt(start, path, cost);
+  }
+  function bestOrderFrom(first, rest, cost){
+    var path = [first], left = rest.slice(), cur = first;
+    while (left.length){
+      var bi = 0, bd = Infinity;
+      for (var i = 0; i < left.length; i++){ var d = cost(cur, left[i]); if (d < bd){ bd = d; bi = i; } }
+      cur = left[bi]; path.push(left.splice(bi, 1)[0]);
+    }
+    return path;
+  }
+  function pathCost(start, path, cost){
+    var s = 0, prev = start;
+    path.forEach(function(x){ if (prev != null) s += cost(prev, x); prev = x; });
+    return s;
+  }
+  function twoOpt(start, path, cost){
     var improved = true, guard = 0;
     while (improved && guard++ < 50){
       improved = false;
       for (var a = 0; a < path.length - 1; a++){
         for (var b = a + 1; b < path.length; b++){
           var cand = path.slice(0, a).concat(path.slice(a, b + 1).reverse(), path.slice(b + 1));
-          if (len(cand) + 1e-9 < len(path)){ path = cand; improved = true; }
+          if (pathCost(start, cand, cost) + 1e-9 < pathCost(start, path, cost)){ path = cand; improved = true; }
         }
       }
     }
@@ -3085,13 +3162,38 @@
     var btn = document.getElementById("visitsOptimizeBtn");
     btn.disabled = true;
     setVisitsStatus("A obter a tua localização…", false);
-    currentPosition().then(function(here){
-      var path = bestOrder(here, located);
-      renumberVisits(done.concat(path.map(function(s){ return s.id; }), unlocated));
-      saveStore(); renderVisits();
-      var km = pathKm((here ? [here] : []).concat(path.map(function(s){ return s.p; })));
-      setVisitsStatus("Ordem otimizada " + (here ? "a partir da tua localização" : "(sem a tua localização: o percurso mais curto entre as visitas)") +
-        " · ≈ " + formatKm(km) + " km em linha reta" + (unlocated.length ? "; " + unlocated.length + " sem localização ficam no fim" : "") + ".", false);
+    var here = null, byRoad = true;
+    currentPosition().then(function(pos){
+      here = pos;
+      setVisitsStatus("A calcular os tempos de condução pela estrada…", false);
+      var pts = (here ? [here] : []).concat(located.map(function(s){ return s.p; }));
+      return roadMatrix(pts).then(function(m){
+        return function(i, j){ var v = m[i] && m[i][j]; return v == null ? 1e6 : v; };
+      }, function(err){
+        console.warn("road matrix failed", err);
+        byRoad = false;
+        return function(i, j){ return haversineKm(pts[i], pts[j]); };
+      }).then(function(cost){
+        var order = bestOrder(pts.length, !!here, cost);
+        var path = order.map(function(i){ return located[here ? i - 1 : i]; });
+        renumberVisits(done.concat(path.map(function(s){ return s.id; }), unlocated));
+        saveStore(); renderVisits();
+        var from = here ? "a partir da tua localização" : "(sem a tua localização: o percurso mais curto entre as visitas)";
+        var tail = unlocated.length ? "; " + unlocated.length + " sem localização ficam no fim" : "";
+        var routePts = (here ? [here] : []).concat(path.map(function(s){ return s.p; }));
+        if (!byRoad){
+          setVisitsStatus("Ordem otimizada " + from + " em linha reta (sem ligação ao serviço de rotas) · ≈ " + formatKm(pathKm(routePts)) + " km" + tail + ".", false);
+          return;
+        }
+        return roadRoute(routePts).then(function(r){
+          setVisitsStatus("Ordem otimizada pela estrada " + from + " · " + formatKm(r.km) + " km · " + formatMin(r.min) + " de condução" + tail + ".", false);
+        }, function(){
+          setVisitsStatus("Ordem otimizada pela estrada " + from + tail + ".", false);
+        });
+      });
+    }).catch(function(err){
+      console.error("optimize visits failed", err);
+      setVisitsStatus("Não foi possível otimizar a ordem.", true);
     }).then(function(){ btn.disabled = false; });
   }
 
@@ -3160,13 +3262,14 @@
       var bits = [];
       if (c && c.address) bits.push(c.address);
       else if (!p) bits.push("Sem localização — define-a em Clientes");
-      if (p && prev) bits.push("≈ " + formatKm(haversineKm(prev, p)) + " km da anterior");
       if (m.visit.done && m.visit.doneAt){
         var t = new Date(m.visit.doneAt);
         if (!isNaN(t.getTime())) bits.push("feita às " + String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0"));
       }
       sub.textContent = bits.join(" · ");
       main.appendChild(sub);
+      // Distance from the previous visit; filled in once the road route arrives.
+      if (p && prev){ var leg = el("div", "visit-leg"); leg.dataset.visit = id; main.appendChild(leg); }
       li.appendChild(main);
       if (p) prev = p;
 
@@ -3199,15 +3302,41 @@
     document.getElementById("visitsRouteBtn").disabled = !pending.length;
     document.getElementById("visitsOptimizeBtn").disabled = pending.filter(visitPoint).length < 2;
     var doneN = ids.length - pending.length;
-    var pts = ids.map(visitPoint).filter(Boolean);
-    document.getElementById("visitsSummary").textContent = ids.length
-      ? doneN + " de " + ids.length + " feita(s)" + (pts.length > 1 ? " · ≈ " + formatKm(pathKm(pts)) + " km em linha reta" : "")
-      : "";
-    drawVisitsOnMap(ids);
+    var locIds = ids.filter(visitPoint);
+    var pts = locIds.map(visitPoint);
+    var head = ids.length ? doneN + " de " + ids.length + " feita(s)" : "";
+    var summary = document.getElementById("visitsSummary");
+    summary.textContent = head + (pts.length > 1 ? " · a calcular a distância pela estrada…" : "");
+    drawVisitsOnMap(ids, null);
+    if (pts.length < 2) return;
+
+    var token = ++visitsRenderToken;
+    function fillLegs(legs, road){
+      Array.prototype.forEach.call(list.querySelectorAll(".visit-leg"), function(node){
+        var k = locIds.indexOf(node.dataset.visit) - 1, l = legs[k];
+        if (!l) return;
+        node.textContent = road
+          ? formatKm(l.km) + " km · " + formatMin(l.min) + " desde a anterior"
+          : "≈ " + formatKm(l.km) + " km em linha reta desde a anterior";
+      });
+    }
+    roadRoute(pts).then(function(r){
+      if (token !== visitsRenderToken) return;
+      summary.textContent = head + " · " + formatKm(r.km) + " km · " + formatMin(r.min) + " de condução";
+      fillLegs(r.legs, true);
+      drawVisitsOnMap(ids, r.line);
+    }, function(err){
+      if (token !== visitsRenderToken) return;
+      console.warn("road route failed", err);
+      summary.textContent = head + " · ≈ " + formatKm(pathKm(pts)) + " km em linha reta (sem ligação ao serviço de rotas)";
+      fillLegs(pts.slice(1).map(function(p, i){ return { km: haversineKm(pts[i], p) }; }), false);
+    });
   }
+  var visitsRenderToken = 0;
 
   // Numbered pins and the planned route on the Início map.
-  function drawVisitsOnMap(ids){
+  // `road` = the road route's line ([[lat,lng],…]); null draws a dashed straight line meanwhile.
+  function drawVisitsOnMap(ids, road){
     if (!homeMap || !mapsAvailable()) return;
     if (!visitsLayer) visitsLayer = window.L.layerGroup().addTo(homeMap);
     visitsLayer.clearLayers();
@@ -3222,7 +3351,8 @@
         keyboard: false, zIndexOffset: 1000
       }).addTo(visitsLayer);
     });
-    if (pts.length > 1) window.L.polyline(pts, { color: "#4F46E5", weight: 3, opacity: .7, dashArray: "6 6" }).addTo(visitsLayer);
+    if (road && road.length > 1) window.L.polyline(road, { color: "#4F46E5", weight: 4, opacity: .75 }).addTo(visitsLayer);
+    else if (pts.length > 1) window.L.polyline(pts, { color: "#4F46E5", weight: 3, opacity: .5, dashArray: "6 6" }).addTo(visitsLayer);
   }
 
   // ---------- clients map (Leaflet + OpenStreetMap) ----------
