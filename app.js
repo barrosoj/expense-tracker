@@ -3283,6 +3283,7 @@
       if (p) prev = p;
 
       var actions = el("div", "visit-actions");
+      actions.appendChild(visitButton("visit-brief", "Resumo antes da visita", "☰", function(){ openBrief(id, false); }));
       actions.appendChild(visitButton("", "Subir", "↑", function(){ moveVisit(id, -1); }));
       actions.appendChild(visitButton("", "Descer", "↓", function(){ moveVisit(id, 1); }));
       var waze = wazeUrl(id);
@@ -3311,6 +3312,7 @@
     document.getElementById("visitsRouteBtn").disabled = !pending.length;
     document.getElementById("visitsWazeBtn").disabled = !pending.some(function(id){ return wazeUrl(id); });
     document.getElementById("visitsOptimizeBtn").disabled = pending.filter(visitPoint).length < 2;
+    syncArrivalWatch();
     var doneN = ids.length - pending.length;
     var locIds = ids.filter(visitPoint);
     var pts = locIds.map(visitPoint);
@@ -3343,6 +3345,226 @@
     });
   }
   var visitsRenderToken = 0;
+
+  // ---------- briefing before a visit (resumo antes da visita) ----------
+  // Built only from this app's data: last visits/meetings with the client and what is still open
+  // (meeting actions, tasks, active projects). Opens from the plan, or by itself on arrival.
+  var briefVisitId = null;
+  var ARRIVAL_METERS = 300;
+
+  function relDays(iso){
+    var d = daysBetween(iso, todayStr());
+    if (d === 0) return "hoje";
+    if (d === 1) return "ontem";
+    return d > 0 ? "há " + d + " dias" : "daqui a " + (-d) + " dias";
+  }
+  function clip(s, n){
+    s = String(s || "").replace(/\s+/g, " ").trim();
+    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+  }
+  function validIso(s){ return /^\d{4}-\d{2}-\d{2}$/.test(String(s || "")); }
+
+  function clientBrief(cid, exceptId){
+    var today = todayStr();
+    var mine = Object.keys(meetings).filter(function(id){ return id !== exceptId && meetings[id].clientId === cid; });
+    // Past contact: meetings up to today; planned visits count only once done or with notes.
+    var past = mine.filter(function(id){
+      var m = meetings[id];
+      if (!validIso(m.date) || m.date > today) return false;
+      return !m.visit || m.visit.done || m.notes || m.summary;
+    }).sort(function(a, b){
+      var ma = meetings[a], mb = meetings[b];
+      if (ma.date !== mb.date) return ma.date < mb.date ? 1 : -1;
+      return (mb.updatedAt || 0) - (ma.updatedAt || 0);
+    });
+    var actions = [];
+    mine.forEach(function(id){
+      (meetings[id].actions || []).forEach(function(a){
+        if (!a.done && a.text) actions.push({ text:a.text, date:meetings[id].date, meetingId:id });
+      });
+    });
+    actions.sort(function(a, b){ return String(a.date) < String(b.date) ? -1 : 1; });
+    var openTasks = Object.keys(tasks).filter(function(id){ return tasks[id].clientId === cid && tasks[id].status !== "done"; })
+      .sort(function(a, b){
+        var ta = tasks[a], tb = tasks[b];
+        var la = validIso(ta.due) && ta.due < today, lb = validIso(tb.due) && tb.due < today;
+        if (la !== lb) return la ? -1 : 1;
+        var pa = PRIORITY_ORDER[ta.priority] != null ? PRIORITY_ORDER[ta.priority] : 1;
+        var pb = PRIORITY_ORDER[tb.priority] != null ? PRIORITY_ORDER[tb.priority] : 1;
+        if (pa !== pb) return pa - pb;
+        return String(ta.due || "9999") < String(tb.due || "9999") ? -1 : 1;
+      });
+    var openProjects = Object.keys(projects).filter(function(id){
+      return projects[id].clientId === cid && projects[id].status !== "concluido";
+    }).map(function(id){
+      var steps = sortedSteps((projects[id].schedule || []).filter(function(s){ return s && !s.done; }));
+      return { id:id, next: steps[0] || null };
+    });
+    return { past:past, actions:actions, tasks:openTasks, projects:openProjects };
+  }
+
+  function briefSection(title, count){
+    var sec = el("section", "brief-section");
+    var h = el("h3", "brief-heading"); h.textContent = title + (count != null ? " (" + count + ")" : "");
+    sec.appendChild(h);
+    return sec;
+  }
+  function briefItem(list, text, extra, cls, onClick){
+    var li = el("li", "brief-item" + (cls ? " " + cls : ""));
+    var main = el(onClick ? "button" : "span", "brief-item-text");
+    if (onClick){ main.type = "button"; main.addEventListener("click", onClick); }
+    main.textContent = text;
+    li.appendChild(main);
+    if (extra){ var x = el("span", "brief-item-extra"); x.textContent = extra; li.appendChild(x); }
+    list.appendChild(li);
+  }
+  function closeBrief(){ document.getElementById("briefModalOverlay").hidden = true; briefVisitId = null; }
+  function goFromBrief(fn){ closeBrief(); fn(); }
+
+  function openBrief(visitId, arrived){
+    var m = meetings[visitId];
+    if (!m) return;
+    var cid = m.clientId, c = clients[cid];
+    briefVisitId = visitId;
+    var b = clientBrief(cid, visitId);
+    var today = todayStr();
+
+    document.getElementById("briefKicker").textContent = arrived ? "Chegaste ao cliente · resumo antes da visita" : "Resumo antes da visita";
+    document.getElementById("briefTitle").textContent = c ? c.name : (m.title || "Cliente");
+    var meta = [];
+    if (b.past.length){
+      var last = meetings[b.past[0]];
+      meta.push("Último contacto " + relDays(last.date) + " (" + formatDateShort(last.date) + ")");
+    } else meta.push("Sem contactos anteriores registados");
+    if (c && c.contact) meta.push(c.contact);
+    if (c && c.phone) meta.push(c.phone);
+    document.getElementById("briefMeta").textContent = meta.join(" · ");
+
+    var body = document.getElementById("briefBody");
+    body.innerHTML = "";
+
+    var openCount = b.actions.length + b.tasks.length + b.projects.length;
+    var open = briefSection("Temas em aberto", openCount);
+    var ol = el("ul", "brief-list");
+    b.actions.forEach(function(a){
+      briefItem(ol, a.text, "ação da reunião de " + formatDateShort(a.date), "is-action",
+        function(){ goFromBrief(function(){ openMeetingModal(a.meetingId); }); });
+    });
+    b.tasks.forEach(function(id){
+      var t = tasks[id], extra = [];
+      if (t.status === "doing") extra.push("em curso");
+      if (validIso(t.due)) extra.push(t.due < today ? "atrasada desde " + formatDateShort(t.due) : "prazo " + formatDateShort(t.due));
+      if (t.priority === "alta") extra.push("prioridade alta");
+      briefItem(ol, t.title || "Tarefa", extra.join(" · "), "is-task" + (validIso(t.due) && t.due < today ? " is-late" : ""),
+        function(){ goFromBrief(function(){ openTaskModal(id); }); });
+    });
+    b.projects.forEach(function(p){
+      var pr = projects[p.id];
+      var extra = (PROJECT_STATUS_LABEL[pr.status] || "Ativo") +
+        (p.next ? " · próxima etapa: " + clip(p.next.name, 60) + (validIso(p.next.due) ? " até " + formatDateShort(p.next.due) : "") : "");
+      briefItem(ol, "Projeto " + (pr.name || ""), extra, "is-project",
+        function(){ goFromBrief(function(){ openProjectModal(p.id); }); });
+    });
+    if (!openCount) ol.appendChild(el("li", "hint", "Nada em aberto com este cliente."));
+    open.appendChild(ol);
+    body.appendChild(open);
+
+    var hist = briefSection("Últimas visitas e reuniões", null);
+    var hl = el("ul", "brief-list");
+    b.past.slice(0, 3).forEach(function(id){
+      var pm = meetings[id];
+      var text = clip(pm.summary || pm.notes || pm.agenda, 280);
+      briefItem(hl, formatDateShort(pm.date) + " · " + (pm.visit ? "Visita" : (pm.title || "Reunião")), text || "Sem notas.", "is-meeting",
+        function(){ goFromBrief(function(){ openMeetingModal(id); }); });
+    });
+    if (!b.past.length) hl.appendChild(el("li", "hint", "Ainda não há visitas nem reuniões registadas com este cliente."));
+    if (b.past.length > 3){
+      var more = el("li", "hint"); more.textContent = "E mais " + (b.past.length - 3) + " no separador Reuniões."; hl.appendChild(more);
+    }
+    hist.appendChild(hl);
+    body.appendChild(hist);
+
+    document.getElementById("briefNotesBtn").textContent = m.visit && m.visit.done ? "Ver notas da visita" : "Escrever notas da visita";
+    document.getElementById("briefModalOverlay").hidden = false;
+    if (arrived && navigator.vibrate){ try { navigator.vibrate(200); } catch(e){} }
+  }
+
+  // ---------- arrival: open the briefing when the phone gets to a client of today's plan ----------
+  // Works while the app is open on screen (a web app can't follow the location in the background);
+  // it also checks once each time the app comes back to the front. Never asks for location by itself.
+  var arrivalWatch = null, geoPermission = null;
+  function briefShownKey(){ return "qt_brief_shown:" + todayStr(); }
+  function briefShown(){ try { return JSON.parse(sessionStorage.getItem(briefShownKey()) || "{}"); } catch(e){ return {}; } }
+  function markBriefShown(id){
+    var s = briefShown(); s[id] = 1;
+    try { sessionStorage.setItem(briefShownKey(), JSON.stringify(s)); } catch(e){}
+  }
+  function pendingTodayVisits(){
+    return visitIdsFor(todayStr()).filter(function(id){ return !meetings[id].visit.done && visitPoint(id); });
+  }
+  function anyModalOpen(){ return !!document.querySelector(".modal-overlay:not([hidden])"); }
+  function checkArrival(pos){
+    if (!pos || !pos.coords) return;
+    var acc = Number(pos.coords.accuracy) || 0;
+    if (acc > 1000) return;
+    var here = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+    var shown = briefShown(), best = null, bestM = Infinity;
+    pendingTodayVisits().forEach(function(id){
+      if (shown[id]) return;
+      var d = haversineKm(here, visitPoint(id)) * 1000;
+      if (d < bestM){ bestM = d; best = id; }
+    });
+    if (best && bestM <= ARRIVAL_METERS + Math.min(acc, 200) && !anyModalOpen()){
+      markBriefShown(best);
+      openBrief(best, true);
+    }
+  }
+  function stopArrivalWatch(){
+    if (arrivalWatch != null && navigator.geolocation){ navigator.geolocation.clearWatch(arrivalWatch); }
+    arrivalWatch = null;
+    updateArrivalHint();
+  }
+  function startArrivalWatch(){
+    if (arrivalWatch != null || !navigator.geolocation) return;
+    arrivalWatch = navigator.geolocation.watchPosition(checkArrival, function(err){
+      if (err && err.code === 1){ geoPermission = "denied"; stopArrivalWatch(); }
+    }, { enableHighAccuracy:true, maximumAge:60000, timeout:30000 });
+    updateArrivalHint();
+  }
+  function syncArrivalWatch(){
+    var want = !document.hidden && pendingTodayVisits().length > 0;
+    if (!want){ stopArrivalWatch(); return; }
+    if (geoPermission === "granted"){ startArrivalWatch(); return; }
+    if (geoPermission === null && navigator.permissions && navigator.permissions.query){
+      geoPermission = "checking";
+      navigator.permissions.query({ name:"geolocation" }).then(function(st){
+        geoPermission = st.state;
+        st.onchange = function(){ geoPermission = st.state; syncArrivalWatch(); };
+        syncArrivalWatch();
+      }).catch(function(){ geoPermission = "prompt"; updateArrivalHint(); });
+      return;
+    }
+    updateArrivalHint();
+  }
+  function enableArrival(){
+    if (!navigator.geolocation){ setVisitsStatus("Este navegador não dá acesso à localização.", true); return; }
+    navigator.geolocation.getCurrentPosition(function(pos){
+      geoPermission = "granted";
+      syncArrivalWatch();
+      checkArrival(pos);
+      setVisitsStatus("Aviso à chegada ativo: com a app aberta, o resumo aparece quando chegares a cada cliente.", false);
+    }, function(){
+      setVisitsStatus("Sem acesso à localização: o resumo só abre pelo botão de cada visita.", true);
+    }, { enableHighAccuracy:true, timeout:15000 });
+  }
+  function updateArrivalHint(){
+    var btn = document.getElementById("visitsArrivalBtn"), hint = document.getElementById("visitsArrivalHint");
+    if (!btn || !hint) return;
+    var hasToday = pendingTodayVisits().length > 0;
+    var watching = arrivalWatch != null;
+    hint.hidden = !(hasToday && watching);
+    btn.hidden = !(hasToday && !watching && geoPermission !== "denied" && geoPermission !== "granted" && geoPermission !== "checking");
+  }
 
   // Numbered pins and the planned route on the Início map.
   // `road` = the road route's line ([[lat,lng],…]); null draws a dashed straight line meanwhile.
@@ -3735,6 +3957,18 @@
     document.getElementById("visitsOptimizeBtn").addEventListener("click", optimizeVisits);
     document.getElementById("visitsRouteBtn").addEventListener("click", openVisitsRoute);
     document.getElementById("visitsWazeBtn").addEventListener("click", openNextInWaze);
+    document.getElementById("visitsArrivalBtn").addEventListener("click", enableArrival);
+    document.getElementById("briefCloseBtn").addEventListener("click", closeBrief);
+    document.getElementById("briefNotesBtn").addEventListener("click", function(){
+      var id = briefVisitId;
+      closeBrief();
+      if (id && meetings[id]) openMeetingModal(id);
+    });
+    document.getElementById("briefModalOverlay").addEventListener("click", function(e){ if (e.target === e.currentTarget) closeBrief(); });
+    document.addEventListener("visibilitychange", function(){
+      if (document.hidden){ stopArrivalWatch(); return; }
+      syncArrivalWatch();
+    });
     document.getElementById("homeNextMonthBtn").addEventListener("click", function(){ shiftHomeMonth(1); });
     document.getElementById("addMeetingBottomBtn").addEventListener("click", function(){ openMeetingModal(null); });
     document.getElementById("addProjectBottomBtn").addEventListener("click", function(){ openProjectModal(null); });
@@ -3900,6 +4134,7 @@
         if (!document.getElementById("dayExpensesModalOverlay").hidden) closeDayExpensesModal();
         if (!document.getElementById("locationModalOverlay").hidden){ closeLocationModal(); return; }
         if (!document.getElementById("clientModalOverlay").hidden) closeClientModal();
+        if (!document.getElementById("briefModalOverlay").hidden) closeBrief();
       }
     });
   }

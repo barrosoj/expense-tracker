@@ -921,3 +921,25 @@ table.expenses-table{ width:100%; min-width:600px; border-collapse:collapse; fon
   .visit-btn{ width:36px; height:36px; }
   .visits-actions .btn{ flex:1; }
 }
+
+/* ---------- resumo antes da visita ---------- */
+.brief-kicker{ margin:0 0 2px; font-size:12px; font-weight:600; color:var(--accent); text-transform:uppercase; letter-spacing:.04em; }
+.brief-modal h2{ margin:0; }
+.brief-meta{ margin:4px 0 12px; font-size:13px; color:var(--text-muted); }
+.brief-body{ display:flex; flex-direction:column; gap:14px; }
+.brief-heading{ margin:0 0 6px; font-size:13px; font-weight:600; color:var(--text); }
+.brief-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.brief-item{ display:flex; flex-direction:column; gap:2px; padding:8px 10px; border:1px solid var(--border); border-left:3px solid var(--border-strong); border-radius:8px; background:var(--surface); }
+.brief-item.is-action{ border-left-color:var(--warn, #D97706); }
+.brief-item.is-task{ border-left-color:var(--accent); }
+.brief-item.is-late{ border-left-color:var(--danger); }
+.brief-item.is-project{ border-left-color:var(--success); }
+.brief-item-text{ border:none; background:none; padding:0; font:inherit; font-size:14px; font-weight:600; color:var(--text); text-align:left; cursor:pointer; }
+span.brief-item-text{ cursor:default; }
+.brief-item-text:hover{ color:var(--accent); }
+.brief-item-extra{ font-size:12.5px; color:var(--text-muted); white-space:pre-line; }
+.brief-item.is-late .brief-item-extra{ color:var(--danger); }
+.brief-item.is-meeting .brief-item-text{ font-weight:600; font-size:13px; color:var(--text-muted); }
+.brief-item.is-meeting .brief-item-extra{ font-size:13.5px; color:var(--text); }
+.visits-arrival-btn{ align-self:flex-start; border:none; background:none; padding:0; font:inherit; font-size:12.5px; color:var(--accent); cursor:pointer; text-decoration:underline; }
+.visits-arrival-hint{ margin:0; color:var(--success); }

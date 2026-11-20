@@ -160,6 +160,8 @@
         <button type="button" class="btn btn-ghost btn-sm" id="visitsWazeBtn" title="O Waze só aceita um destino de cada vez">Próxima visita no Waze</button>
       </div>
       <p class="hint visits-status" id="visitsStatus" role="status" aria-live="polite"></p>
+      <button type="button" class="link-btn visits-arrival-btn" id="visitsArrivalBtn" hidden>Mostrar o resumo de cada cliente quando lá chegar</button>
+      <p class="hint visits-arrival-hint" id="visitsArrivalHint" hidden>Aviso à chegada ativo: com a app aberta, o resumo do cliente aparece quando chegares.</p>
     </section>
 
     <section class="home-brands">
@@ -321,6 +323,21 @@
       <div class="modal-actions-right">
         <button class="btn btn-ghost" id="cancelTaskBtn">Cancelar</button>
         <button class="btn btn-primary" id="saveTaskBtn">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="briefModalOverlay" hidden>
+  <div class="modal modal-lg brief-modal" role="dialog" aria-modal="true" aria-labelledby="briefTitle">
+    <p class="brief-kicker" id="briefKicker">Resumo antes da visita</p>
+    <h2 id="briefTitle"></h2>
+    <p class="brief-meta" id="briefMeta"></p>
+    <div class="brief-body" id="briefBody"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="briefCloseBtn">Fechar</button>
+      <div class="modal-actions-right">
+        <button class="btn btn-primary" id="briefNotesBtn">Escrever notas da visita</button>
       </div>
     </div>
   </div>
