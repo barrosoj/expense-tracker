@@ -139,6 +139,28 @@
       </article>
     </div>
 
+    <section class="home-visits" id="homeVisits" aria-labelledby="visitsTitle">
+      <div class="home-map-head">
+        <h2 class="home-brands-title" id="visitsTitle">Plano de visitas</h2>
+        <div class="month-nav visits-day-nav">
+          <button type="button" class="icon-btn" id="visitsPrevDayBtn" title="Dia anterior" aria-label="Dia anterior">‹</button>
+          <button type="button" class="visits-day-label" id="visitsDayLabel" title="Voltar a hoje"></button>
+          <button type="button" class="icon-btn" id="visitsNextDayBtn" title="Dia seguinte" aria-label="Dia seguinte">›</button>
+        </div>
+      </div>
+      <span class="home-map-count" id="visitsSummary"></span>
+      <ol class="visits-list" id="visitsList"></ol>
+      <div class="visits-add field">
+        <select id="visitsClientSelect" aria-label="Cliente a visitar"></select>
+        <button type="button" class="btn btn-ghost btn-sm" id="visitsAddBtn">+ Adicionar</button>
+      </div>
+      <div class="visits-actions">
+        <button type="button" class="btn btn-ghost btn-sm" id="visitsOptimizeBtn">Otimizar ordem</button>
+        <button type="button" class="btn btn-primary btn-sm" id="visitsRouteBtn">Abrir rota no Google Maps</button>
+      </div>
+      <p class="hint visits-status" id="visitsStatus" role="status" aria-live="polite"></p>
+    </section>
+
     <section class="home-brands">
       <h2 class="home-brands-title">Compras por marca</h2>
       <ul class="home-brand-list" id="homeBrandList"></ul>

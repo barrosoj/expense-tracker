@@ -592,6 +592,7 @@
 
   function renderHome(){
     try { renderClientMap(); } catch(e){ console.error("mapa falhou", e); }
+    try { renderVisits(); } catch(e){ console.error("plano de visitas falhou", e); }
     if (!homeMonth) homeMonth = todayStr().slice(0,7);
     var brands = brandList();
 
@@ -1080,6 +1081,7 @@
     sub.appendChild(document.createTextNode(clientName(m.clientId) || "Sem cliente"));
     main.appendChild(sub);
     row.appendChild(main);
+    if (m.visit) row.appendChild(el("div", "meeting-row-badge visit-badge" + (m.visit.done ? " is-done" : ""), m.visit.done ? "Visita feita" : "Visita planeada"));
     var pending = (m.actions || []).filter(function(a){ return !a.done; }).length;
     if (pending > 0){
       row.appendChild(el("div", "meeting-row-badge", pending + " ação" + (pending > 1 ? "ões" : "") + " pendente" + (pending > 1 ? "s" : "")));
@@ -2946,6 +2948,283 @@
     renderClientsList(); render();
   }
 
+  // ---------- daily visit plan (plano de visitas) ----------
+  // A planned visit is a meeting with visit:{ order, done, doneAt } on that date: it syncs like any
+  // meeting and its notes, summary and actions are written in the meeting form.
+  var visitsDay = null;
+  var visitsLayer = null;
+  var WEEKDAYS = ["domingo","segunda","terça","quarta","quinta","sexta","sábado"];
+
+  function shiftIso(iso, n){
+    var p = iso.split("-").map(Number);
+    var d = new Date(p[0], p[1] - 1, p[2] + n);
+    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  }
+  function visitsDayLabel(iso){
+    var t = todayStr();
+    var rel = iso === t ? "Hoje" : iso === shiftIso(t, 1) ? "Amanhã" : iso === shiftIso(t, -1) ? "Ontem"
+      : WEEKDAYS[new Date(iso + "T00:00:00").getDay()];
+    return rel + " · " + formatDateShort(iso);
+  }
+  function visitIdsFor(date){
+    return Object.keys(meetings).filter(function(id){ var m = meetings[id]; return m.visit && m.date === date; })
+      .sort(function(a, b){ return (meetings[a].visit.order || 0) - (meetings[b].visit.order || 0); });
+  }
+  function visitClient(id){ return clients[meetings[id].clientId] || null; }
+  function visitPoint(id){ var c = visitClient(id); return hasLocation(c) ? { lat:c.lat, lng:c.lng } : null; }
+  function haversineKm(a, b){
+    var r = Math.PI / 180;
+    var dLat = (b.lat - a.lat) * r, dLng = (b.lng - a.lng) * r;
+    var h = Math.pow(Math.sin(dLat / 2), 2) + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.pow(Math.sin(dLng / 2), 2);
+    return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+  function pathKm(points){
+    var km = 0;
+    for (var i = 1; i < points.length; i++) km += haversineKm(points[i - 1], points[i]);
+    return km;
+  }
+  function formatKm(km){ return km < 10 ? km.toFixed(1).replace(".", ",") : String(Math.round(km)); }
+  function setVisitsStatus(text, isError){
+    var s = document.getElementById("visitsStatus");
+    s.textContent = text || "";
+    s.classList.toggle("error", !!isError);
+  }
+  function updateVisit(id, changes){
+    var m = meetings[id];
+    meetings[id] = Object.assign({}, m, { visit: Object.assign({}, m.visit, changes), updatedAt: Date.now() });
+  }
+  // Rewrites order 1..n following `ids`, touching only the visits whose order changed.
+  function renumberVisits(ids){
+    ids.forEach(function(id, i){ if (meetings[id].visit.order !== i + 1) updateVisit(id, { order: i + 1 }); });
+  }
+
+  function addVisit(cid){
+    if (!clients[cid]) return;
+    if (!visitsDay) visitsDay = todayStr();
+    var ids = visitIdsFor(visitsDay);
+    if (ids.some(function(id){ return meetings[id].clientId === cid; })){
+      setVisitsStatus(clients[cid].name + " já está no plano de " + visitsDayLabel(visitsDay).toLowerCase() + ".", true);
+      return;
+    }
+    meetings[genId()] = {
+      title: "Visita a " + clients[cid].name, clientId: cid, projectId: null, date: visitsDay,
+      agenda: "", notes: "", summary: "", actions: [],
+      visit: { order: ids.length + 1, done: false },
+      createdAt: Date.now(), updatedAt: Date.now()
+    };
+    saveStore();
+    setVisitsStatus(clients[cid].name + " adicionado ao plano.", false);
+    renderVisits();
+  }
+  function moveVisit(id, delta){
+    var ids = visitIdsFor(visitsDay);
+    var i = ids.indexOf(id), j = i + delta;
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    ids[i] = ids[j]; ids[j] = id;
+    renumberVisits(ids);
+    saveStore(); renderVisits();
+  }
+  function toggleVisitDone(id){
+    var done = !meetings[id].visit.done;
+    updateVisit(id, { done: done, doneAt: done ? new Date().toISOString() : null });
+    saveStore();
+    setVisitsStatus(done ? "Visita registada. Toca no nome do cliente para escrever as notas da visita." : "", false);
+    renderVisits();
+  }
+  function removeVisit(id){
+    var m = meetings[id];
+    var hasContent = m.notes || m.summary || m.agenda || (m.actions && m.actions.length);
+    if (hasContent && !window.confirm("Esta visita tem notas. Retirar do plano e apagar as notas?")) return;
+    delete meetings[id];
+    renumberVisits(visitIdsFor(visitsDay));
+    saveStore(); setVisitsStatus("", false); renderVisits();
+  }
+
+  // Nearest neighbour from the start, then 2-opt, on straight-line distances.
+  function bestOrder(start, stops){
+    var left = stops.slice(), path = [], cur = start;
+    while (left.length){
+      var bi = 0, bd = Infinity;
+      for (var i = 0; i < left.length; i++){
+        var d = cur ? haversineKm(cur, left[i].p) : 0;
+        if (d < bd){ bd = d; bi = i; }
+      }
+      cur = left[bi].p;
+      path.push(left.splice(bi, 1)[0]);
+    }
+    function len(arr){ return pathKm((start ? [start] : []).concat(arr.map(function(s){ return s.p; }))); }
+    var improved = true, guard = 0;
+    while (improved && guard++ < 50){
+      improved = false;
+      for (var a = 0; a < path.length - 1; a++){
+        for (var b = a + 1; b < path.length; b++){
+          var cand = path.slice(0, a).concat(path.slice(a, b + 1).reverse(), path.slice(b + 1));
+          if (len(cand) + 1e-9 < len(path)){ path = cand; improved = true; }
+        }
+      }
+    }
+    return path;
+  }
+  function currentPosition(){
+    return new Promise(function(resolve){
+      if (!navigator.geolocation){ resolve(null); return; }
+      navigator.geolocation.getCurrentPosition(
+        function(pos){ resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }); },
+        function(){ resolve(null); },
+        { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 }
+      );
+    });
+  }
+  function optimizeVisits(){
+    var ids = visitIdsFor(visitsDay);
+    var done = ids.filter(function(id){ return meetings[id].visit.done; });
+    var pending = ids.filter(function(id){ return !meetings[id].visit.done; });
+    var located = pending.filter(function(id){ return visitPoint(id); }).map(function(id){ return { id:id, p:visitPoint(id) }; });
+    var unlocated = pending.filter(function(id){ return !visitPoint(id); });
+    if (located.length < 2){ setVisitsStatus("Precisas de pelo menos 2 visitas por fazer com localização para otimizar.", true); return; }
+    var btn = document.getElementById("visitsOptimizeBtn");
+    btn.disabled = true;
+    setVisitsStatus("A obter a tua localização…", false);
+    currentPosition().then(function(here){
+      var path = bestOrder(here, located);
+      renumberVisits(done.concat(path.map(function(s){ return s.id; }), unlocated));
+      saveStore(); renderVisits();
+      var km = pathKm((here ? [here] : []).concat(path.map(function(s){ return s.p; })));
+      setVisitsStatus("Ordem otimizada " + (here ? "a partir da tua localização" : "(sem a tua localização: o percurso mais curto entre as visitas)") +
+        " · ≈ " + formatKm(km) + " km em linha reta" + (unlocated.length ? "; " + unlocated.length + " sem localização ficam no fim" : "") + ".", false);
+    }).then(function(){ btn.disabled = false; });
+  }
+
+  function visitDestination(id){
+    var p = visitPoint(id);
+    if (p) return p.lat.toFixed(6) + "," + p.lng.toFixed(6);
+    var c = visitClient(id);
+    return c && c.address ? c.address : null;
+  }
+  function wazeUrl(id){
+    var p = visitPoint(id), c = visitClient(id);
+    if (p) return "https://waze.com/ul?ll=" + p.lat.toFixed(6) + "," + p.lng.toFixed(6) + "&navigate=yes";
+    return c && c.address ? "https://waze.com/ul?q=" + encodeURIComponent(c.address) + "&navigate=yes" : null;
+  }
+  function openExternal(url){
+    var a = document.createElement("a");
+    a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer";
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  // Google Maps route from where the phone is, through the visits still to do (max 10 stops).
+  function openVisitsRoute(){
+    var stops = visitIdsFor(visitsDay).filter(function(id){ return !meetings[id].visit.done; })
+      .map(visitDestination).filter(Boolean);
+    if (!stops.length){ setVisitsStatus("Não há visitas por fazer com localização ou morada.", true); return; }
+    var cut = stops.length > 10;
+    stops = stops.slice(0, 10);
+    var dest = stops.pop();
+    var url = "https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=" + encodeURIComponent(dest) +
+      (stops.length ? "&waypoints=" + encodeURIComponent(stops.join("|")) : "");
+    openExternal(url);
+    setVisitsStatus(cut ? "O Google Maps aceita até 10 paragens: abri as 10 primeiras." : "", false);
+  }
+
+  function visitButton(cls, label, text, onClick){
+    var b = el("button", "icon-btn visit-btn " + cls);
+    b.type = "button"; b.textContent = text; b.title = label; b.setAttribute("aria-label", label);
+    b.addEventListener("click", function(e){ e.stopPropagation(); onClick(); });
+    return b;
+  }
+
+  function renderVisits(){
+    if (!document.getElementById("visitsList")) return;
+    if (!visitsDay) visitsDay = todayStr();
+    document.getElementById("visitsDayLabel").textContent = visitsDayLabel(visitsDay);
+    var ids = visitIdsFor(visitsDay);
+    var list = document.getElementById("visitsList");
+    list.innerHTML = "";
+    if (!ids.length){
+      list.appendChild(el("li", "hint visits-empty", "Sem visitas planeadas. Escolhe um cliente abaixo ou no mapa."));
+    }
+    var prev = null;
+    ids.forEach(function(id, i){
+      var m = meetings[id], c = visitClient(id), p = visitPoint(id);
+      var li = el("li", "visit-row" + (m.visit.done ? " is-done" : ""));
+      var num = el("span", "visit-num mono"); num.textContent = m.visit.done ? "✓" : String(i + 1);
+      if (c && c.color) num.style.borderColor = c.color;
+      li.appendChild(num);
+
+      var main = el("div", "visit-main");
+      var name = el("button", "visit-name"); name.type = "button";
+      name.textContent = c ? c.name : (m.title || "Cliente apagado");
+      name.title = "Abrir as notas da visita";
+      name.addEventListener("click", function(){ openMeetingModal(id); });
+      main.appendChild(name);
+      var sub = el("div", "visit-sub");
+      var bits = [];
+      if (c && c.address) bits.push(c.address);
+      else if (!p) bits.push("Sem localização — define-a em Clientes");
+      if (p && prev) bits.push("≈ " + formatKm(haversineKm(prev, p)) + " km da anterior");
+      if (m.visit.done && m.visit.doneAt){
+        var t = new Date(m.visit.doneAt);
+        if (!isNaN(t.getTime())) bits.push("feita às " + String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0"));
+      }
+      sub.textContent = bits.join(" · ");
+      main.appendChild(sub);
+      li.appendChild(main);
+      if (p) prev = p;
+
+      var actions = el("div", "visit-actions");
+      actions.appendChild(visitButton("", "Subir", "↑", function(){ moveVisit(id, -1); }));
+      actions.appendChild(visitButton("", "Descer", "↓", function(){ moveVisit(id, 1); }));
+      var waze = wazeUrl(id);
+      if (waze) actions.appendChild(visitButton("visit-nav", "Navegar até aqui (Waze)", "➤", function(){ openExternal(waze); }));
+      actions.appendChild(visitButton("visit-check" + (m.visit.done ? " is-set" : ""), m.visit.done ? "Marcar como por fazer" : "Marcar como visitado", "✓", function(){ toggleVisitDone(id); }));
+      actions.appendChild(visitButton("visit-remove", "Retirar do plano", "×", function(){ removeVisit(id); }));
+      li.appendChild(actions);
+      list.appendChild(li);
+    });
+
+    // Clients that can still be added, by name.
+    var sel = document.getElementById("visitsClientSelect");
+    var inPlan = {};
+    ids.forEach(function(id){ inPlan[meetings[id].clientId] = true; });
+    sel.innerHTML = "";
+    var first = el("option"); first.value = ""; first.textContent = "Escolhe um cliente…"; sel.appendChild(first);
+    Object.keys(clients).filter(function(cid){ return !inPlan[cid]; })
+      .sort(function(a, b){ return String(clients[a].name).localeCompare(String(clients[b].name), "pt", { sensitivity:"base" }); })
+      .forEach(function(cid){
+        var o = el("option"); o.value = cid;
+        o.textContent = clients[cid].name + (hasLocation(clients[cid]) || clients[cid].address ? "" : " (sem localização)");
+        sel.appendChild(o);
+      });
+
+    var pending = ids.filter(function(id){ return !meetings[id].visit.done; });
+    document.getElementById("visitsRouteBtn").disabled = !pending.length;
+    document.getElementById("visitsOptimizeBtn").disabled = pending.filter(visitPoint).length < 2;
+    var doneN = ids.length - pending.length;
+    var pts = ids.map(visitPoint).filter(Boolean);
+    document.getElementById("visitsSummary").textContent = ids.length
+      ? doneN + " de " + ids.length + " feita(s)" + (pts.length > 1 ? " · ≈ " + formatKm(pathKm(pts)) + " km em linha reta" : "")
+      : "";
+    drawVisitsOnMap(ids);
+  }
+
+  // Numbered pins and the planned route on the Início map.
+  function drawVisitsOnMap(ids){
+    if (!homeMap || !mapsAvailable()) return;
+    if (!visitsLayer) visitsLayer = window.L.layerGroup().addTo(homeMap);
+    visitsLayer.clearLayers();
+    var pts = [];
+    ids.forEach(function(id, i){
+      var p = visitPoint(id);
+      if (!p) return;
+      pts.push([p.lat, p.lng]);
+      var done = meetings[id].visit.done;
+      window.L.marker([p.lat, p.lng], {
+        icon: window.L.divIcon({ className: "visit-pin" + (done ? " is-done" : ""), html: done ? "✓" : String(i + 1), iconSize: [24, 24], iconAnchor: [12, 12] }),
+        keyboard: false, zIndexOffset: 1000
+      }).addTo(visitsLayer);
+    });
+    if (pts.length > 1) window.L.polyline(pts, { color: "#4F46E5", weight: 3, opacity: .7, dashArray: "6 6" }).addTo(visitsLayer);
+  }
+
   // ---------- clients map (Leaflet + OpenStreetMap) ----------
   // Each client may have { address, lat, lng }. The Início shows them on a map; the location is
   // set in the Clientes page (address search or a click on the map). Map tiles come from
@@ -3008,6 +3287,10 @@
       var n = openTaskCount(cid);
       var meta = el("div", "map-popup-meta"); meta.textContent = n === 1 ? "1 tarefa aberta" : n + " tarefas abertas";
       pop.appendChild(meta);
+      var planBtn = el("button", "btn btn-ghost btn-sm map-popup-plan");
+      planBtn.type = "button"; planBtn.textContent = "+ Plano de visitas";
+      planBtn.addEventListener("click", function(){ addVisit(cid); homeMap.closePopup(); });
+      pop.appendChild(planBtn);
       marker.bindPopup(pop);
       marker.bindTooltip(escapeHtml(c.name), { direction:"top", offset:[0, -8] });
       marker.addTo(homeMapLayer);
@@ -3301,6 +3584,16 @@
       if (e.key === "Enter"){ e.preventDefault(); addPointDraft(); }
     });
     document.getElementById("homePrevMonthBtn").addEventListener("click", function(){ shiftHomeMonth(-1); });
+    document.getElementById("visitsPrevDayBtn").addEventListener("click", function(){ visitsDay = shiftIso(visitsDay || todayStr(), -1); setVisitsStatus(""); renderVisits(); });
+    document.getElementById("visitsNextDayBtn").addEventListener("click", function(){ visitsDay = shiftIso(visitsDay || todayStr(), 1); setVisitsStatus(""); renderVisits(); });
+    document.getElementById("visitsDayLabel").addEventListener("click", function(){ visitsDay = todayStr(); setVisitsStatus(""); renderVisits(); });
+    document.getElementById("visitsAddBtn").addEventListener("click", function(){
+      var sel = document.getElementById("visitsClientSelect");
+      if (!sel.value){ setVisitsStatus("Escolhe primeiro o cliente.", true); sel.focus(); return; }
+      addVisit(sel.value);
+    });
+    document.getElementById("visitsOptimizeBtn").addEventListener("click", optimizeVisits);
+    document.getElementById("visitsRouteBtn").addEventListener("click", openVisitsRoute);
     document.getElementById("homeNextMonthBtn").addEventListener("click", function(){ shiftHomeMonth(1); });
     document.getElementById("addMeetingBottomBtn").addEventListener("click", function(){ openMeetingModal(null); });
     document.getElementById("addProjectBottomBtn").addEventListener("click", function(){ openProjectModal(null); });

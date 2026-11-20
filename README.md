@@ -8,6 +8,7 @@ Uma aplicação simples para acompanhar despesas e organizar tarefas, reuniões 
 
 - **Despesas:** regista data, valor, categoria, fornecedor, descrição e cliente. Consulta totais por categoria e por dia, mês a mês, e exporta as despesas mensais em CSV.
 - **Faturas por código QR:** em "Fotografar fatura", a app lê o código QR das faturas portuguesas e preenche data, valor e descrição; guarda o NIF do vendedor, o número do documento, o ATCUD e o IVA, avisa se a fatura já foi registada e inclui estes dados na exportação CSV. Tudo é lido no próprio dispositivo, sem internet; sem QR legível, usa a leitura de texto do talão.
+- **Plano de visitas:** no Início, escolhe os clientes a visitar em cada dia (na lista ou no mapa), otimiza a ordem a partir da tua localização, abre a rota no Google Maps ou navega até cada cliente no Waze, e marca cada visita como feita. Cada visita fica nas Reuniões, onde escreves as notas.
 - **Tarefas:** organiza tarefas por estado, prioridade, cliente e prazo.
 - **Reuniões:** guarda preparação, notas, resumo e ações a acompanhar.
 - **Projetos:** acompanha estado, descrição e documentos anexados.
