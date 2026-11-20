@@ -101,7 +101,7 @@
   function formatDateShort(dateStr){
     if (!dateStr) return "—";
     var d = new Date(dateStr + "T00:00:00");
-    if (isNaN(d.getTime())) return dateStr;
+    if (isNaN(d.getTime())) return "—";
     return d.getDate() + " " + MONTHS[d.getMonth()] + " " + d.getFullYear();
   }
   function clientColor(id){ return (id && clients[id]) ? clients[id].color : null; }
@@ -109,7 +109,8 @@
   function nextPaletteColor(){ return PALETTE[Object.keys(clients).length % PALETTE.length]; }
   function genId(){ return "id" + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
   function formatBytes(n){
-    if (n == null) return "";
+    n = Number(n);
+    if (!isFinite(n) || n < 0) return "";
     if (n < 1024) return n + " B";
     if (n < 1024*1024) return (n/1024).toFixed(0) + " KB";
     return (n/(1024*1024)).toFixed(1) + " MB";
@@ -1524,7 +1525,7 @@
     html += "<th class=\"total-cell\">Total</th></tr></thead><tbody>";
     days.forEach(function(d){
       var row = byDay[d];
-      html += "<tr data-date=\"" + d + "\"><td>" + escapeHtml(formatDateShort(d)) + "</td>";
+      html += "<tr data-date=\"" + escapeHtml(d) + "\"><td>" + escapeHtml(formatDateShort(d)) + "</td>";
       EXPENSE_CATEGORIES.forEach(function(c){
         html += row[c] > 0 ? "<td class=\"mono\">" + formatCurrency(row[c]) + "</td>" : "<td class=\"mono amount-empty\">—</td>";
       });
@@ -1624,7 +1625,9 @@
     });
     function csvField(v){
       var s = String(v == null ? "" : v);
-      if (/[;"\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+      // Text starting with = + - @ would run as a formula when the CSV is opened in Excel.
+      if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+([.,]\d+)?$/.test(s)) s = "'" + s;
+      if (/[;"\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
       return s;
     }
     var lines = ["Data;Categoria;Com quem;Cliente;Fornecedor;Descrição;Valor (€)"];
@@ -1819,8 +1822,16 @@
   function openDocumentBlob(id, name){
     idbGet(id).then(function(rec){
       if (!rec || !rec.blob){ alert("Não foi possível encontrar este documento neste navegador."); return; }
-      var url = URL.createObjectURL(rec.blob);
-      window.open(url, "_blank");
+      // A blob opens with this app's origin, so only types that can't run code are shown;
+      // anything else (HTML, SVG, …) is saved as a download instead of opened.
+      var type = String(rec.blob.type || "").toLowerCase();
+      var viewable = /^(application\/pdf|image\/(png|jpe?g|gif|webp|bmp)|text\/plain)$/.test(type);
+      var url = URL.createObjectURL(viewable ? rec.blob : new Blob([rec.blob], { type:"application/octet-stream" }));
+      var link = document.createElement("a");
+      link.href = url;
+      if (viewable){ link.target = "_blank"; link.rel = "noopener"; }
+      else link.download = name || "documento";
+      document.body.appendChild(link); link.click(); link.remove();
       setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
     }).catch(function(err){
       console.error("openDocumentBlob failed", err);
@@ -2055,7 +2066,7 @@
       : "Vai para a coluna Gasóleo do mapa de Despesas.";
   }
 
-  // ---------- automatic Excel files (only when opened through servidor_local.py) ----------
+  // ---------- automatic Excel files (written to the Google Drive "Despesas" folder) ----------
   // From the templates in the "Despesas" folder the app writes:
   //   "Despesas AAAA.xlsx"        — everything except fleet-card fuel, in the template's columns
   //   "Combustiveis AAAA-MM.xlsx" — fleet-card fuel of that month
@@ -2911,7 +2922,7 @@
       var meta = el("div", "map-popup-meta"); meta.textContent = n === 1 ? "1 tarefa aberta" : n + " tarefas abertas";
       pop.appendChild(meta);
       marker.bindPopup(pop);
-      marker.bindTooltip(c.name, { direction:"top", offset:[0, -8] });
+      marker.bindTooltip(escapeHtml(c.name), { direction:"top", offset:[0, -8] });
       marker.addTo(homeMapLayer);
       bounds.push([c.lat, c.lng]);
     });
@@ -3053,7 +3064,9 @@
       var parsed;
       try { parsed = JSON.parse(reader.result); }
       catch(e){ alert("Este ficheiro não é uma cópia de segurança válida."); return; }
-      if (!parsed || typeof parsed !== "object" || !parsed.clients || !parsed.tasks){
+      function isMap(v){ return v == null || (typeof v === "object" && !Array.isArray(v)); }
+      if (!parsed || typeof parsed !== "object" || !parsed.clients || !parsed.tasks ||
+          !["clients","tasks","meetings","projects","expenses"].every(function(k){ return isMap(parsed[k]); })){
         alert("Este ficheiro não parece ser uma cópia de segurança deste quadro.");
         return;
       }

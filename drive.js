@@ -14,6 +14,7 @@
   var SHEET_MIME = "application/vnd.google-apps.spreadsheet";
   var XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
   var SCOPE = "https://www.googleapis.com/auth/drive";
+  var folderCache = {};
 
   function configured(){ return !!(cfg.googleClientId && cfg.googleDriveFolderId); }
 
@@ -26,7 +27,14 @@
     return null;
   }
   function connected(){ return configured() && !!readToken(); }
-  function forget(){ try { localStorage.removeItem(TOKEN_KEY); } catch(e){} }
+  function forget(){
+    try {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem("qt_drive_state");
+      localStorage.removeItem(RETURN_KEY);
+    } catch(e){}
+    folderCache = {};
+  }
 
   function redirectUri(){ return new URL("drive-auth.html", location.href).href.split("#")[0].split("?")[0]; }
 
@@ -56,6 +64,7 @@
   function api(url, options){
     var token = readToken();
     if (!token) return Promise.reject(NotConnected());
+    if (url.indexOf(API) !== 0 && url.indexOf(UPLOAD) !== 0) return Promise.reject(new Error("endereço do Google Drive inválido"));
     options = options || {};
     options.headers = Object.assign({ Authorization: "Bearer " + token }, options.headers || {});
     return fetch(url, options).then(function(res){
@@ -87,7 +96,6 @@
   }
 
   // Sub-folder of the app's Drive folder by name (first match among `names`, case-insensitive).
-  var folderCache = {};
   function findFolder(names, create){
     var key = names.join("|") + (create ? "+" : "");
     if (folderCache[key]) return folderCache[key];

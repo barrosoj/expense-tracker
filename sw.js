@@ -1,6 +1,6 @@
 // Service worker: caches the app shell so the app works offline once loaded.
 // Bump CACHE_VERSION whenever an app-shell file changes.
-var CACHE_VERSION = "v51";
+var CACHE_VERSION = "v52";
 var CACHE_NAME = "quadro-tarefas-" + CACHE_VERSION;
 var APP_SHELL = [
   "./",

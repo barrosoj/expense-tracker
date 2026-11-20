@@ -268,6 +268,8 @@
     if (previousUserId){ try { localStorage.removeItem(sessionStartKey(previousUserId)); } catch(e){} }
     activeUserId = null;
     try { localStorage.removeItem(LAST_USER_KEY); } catch(e){}
+    // The Google Drive access belongs to whoever signed in: never leave it for the next user.
+    if (window.QuadroDrive) window.QuadroDrive.forget();
     $("accountBox").hidden = true;
     pendingEmail = "";
     showScreen();

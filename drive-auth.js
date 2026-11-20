@@ -16,7 +16,7 @@
   history.replaceState(null, "", location.pathname);
 
   if (token && stateOk){
-    var secs = parseInt(params.get("expires_in"), 10) || 3600;
+    var secs = Math.min(parseInt(params.get("expires_in"), 10) || 3600, 3600);
     try { localStorage.setItem("qt_drive_token", JSON.stringify({ token: token, exp: Date.now() + secs * 1000 })); } catch(e){}
     location.replace(back);
     return;
