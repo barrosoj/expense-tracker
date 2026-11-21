@@ -118,6 +118,19 @@
   <div class="filters" id="filters"></div>
 
   <section class="home-view" id="homeView" hidden>
+    <section class="home-agenda" id="homeAgenda" aria-labelledby="agendaTitle">
+      <div class="home-map-head">
+        <h2 class="home-brands-title" id="agendaTitle">Agenda</h2>
+        <div class="month-nav visits-day-nav">
+          <button type="button" class="icon-btn" id="agendaPrevBtn" title="Semana anterior" aria-label="Semana anterior">‹</button>
+          <button type="button" class="visits-day-label" id="agendaRangeLabel"></button>
+          <button type="button" class="icon-btn" id="agendaNextBtn" title="Semana seguinte" aria-label="Semana seguinte">›</button>
+        </div>
+      </div>
+      <span class="home-map-count" id="agendaSummary"></span>
+      <div class="agenda-days" id="agendaDays"></div>
+    </section>
+
     <div class="home-toolbar">
       <div class="month-nav">
         <button type="button" class="icon-btn" id="homePrevMonthBtn" title="Mês anterior">‹</button>
@@ -355,6 +368,10 @@
       <div class="field">
         <label for="meetingDate">Data</label>
         <input type="date" id="meetingDate" />
+      </div>
+      <div class="field meeting-time-field">
+        <label for="meetingTime">Hora</label>
+        <input type="time" id="meetingTime" step="300" />
       </div>
     </div>
 

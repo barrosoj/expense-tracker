@@ -922,6 +922,44 @@ table.expenses-table{ width:100%; min-width:600px; border-collapse:collapse; fon
   .visits-actions .btn{ flex:1; }
 }
 
+/* ---------- agenda (Início) ---------- */
+.home-agenda{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-l); box-shadow:var(--shadow); padding:18px 22px 16px; display:flex; flex-direction:column; gap:10px; margin-bottom:16px; }
+.home-agenda .home-brands-title{ margin:0; }
+.agenda-days{ display:flex; flex-direction:column; }
+.agenda-day{ border-top:1px solid var(--border); padding:7px 0; }
+.agenda-day:first-child, .agenda-late + .agenda-day{ border-top:none; }
+.agenda-day-head{ display:flex; align-items:center; gap:8px; min-height:28px; }
+.agenda-day-name{ font-weight:600; font-size:13.5px; text-transform:capitalize; min-width:70px; }
+.agenda-day-date{ font-size:12.5px; color:var(--text-muted); }
+.agenda-free{ font-size:12.5px; color:var(--text-faint); }
+.agenda-add{ margin-left:auto; width:28px; height:28px; font-size:16px; opacity:.55; }
+.agenda-day:hover .agenda-add, .agenda-add:focus-visible{ opacity:1; }
+.agenda-day.is-today .agenda-day-name{ color:var(--accent); }
+.agenda-day.is-past{ opacity:.7; }
+.agenda-list{ display:flex; flex-direction:column; gap:4px; margin-top:4px; }
+.agenda-item{ display:flex; align-items:flex-start; gap:10px; width:100%; text-align:left; font:inherit; color:var(--text); background:var(--surface-2); border:1px solid transparent; border-left:3px solid var(--accent); border-radius:var(--radius-s); padding:7px 10px; cursor:pointer; }
+.agenda-item:hover{ background:var(--surface-3); }
+.agenda-item.agenda-visita{ border-left-color:var(--info); }
+.agenda-item.agenda-tarefa{ border-left-color:var(--warn); }
+.agenda-item.agenda-etapa{ border-left-color:var(--success); }
+.agenda-item.is-done .agenda-title{ text-decoration:line-through; color:var(--text-muted); }
+.agenda-time{ flex:none; width:48px; font-size:12.5px; color:var(--text-muted); padding-top:1px; }
+.agenda-main{ display:flex; flex-direction:column; gap:2px; min-width:0; flex:1; }
+.agenda-title{ font-size:13.5px; overflow-wrap:anywhere; }
+.agenda-kind{ font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; color:var(--text-muted); margin-right:6px; }
+.agenda-sub{ font-size:12px; color:var(--text-muted); display:flex; align-items:center; gap:6px; }
+.agenda-flag{ flex:none; font-size:11.5px; color:var(--success); background:var(--success-soft); border-radius:999px; padding:2px 8px; }
+.agenda-late{ background:var(--danger-soft); border-radius:var(--radius-m); padding:6px 10px 8px; margin-bottom:4px; }
+.agenda-late-head{ cursor:pointer; color:var(--danger); font-weight:600; font-size:13px; padding:2px 0; }
+.agenda-late .agenda-item{ margin-top:4px; background:var(--surface); border-left-color:var(--danger); }
+.meeting-time-field{ max-width:130px; }
+@media (max-width:480px){
+  .home-agenda{ padding:14px 14px 12px; }
+  .agenda-add{ opacity:1; width:36px; height:36px; }
+  .agenda-time{ width:44px; }
+  .meeting-time-field{ max-width:none; }
+}
+
 /* ---------- resumo antes da visita ---------- */
 .brief-kicker{ margin:0 0 2px; font-size:12px; font-weight:600; color:var(--accent); text-transform:uppercase; letter-spacing:.04em; }
 .brief-modal h2{ margin:0; }

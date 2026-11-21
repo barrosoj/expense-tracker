@@ -592,6 +592,7 @@
 
   function renderHome(){
     try { renderClientMap(); } catch(e){ console.error("mapa falhou", e); }
+    try { renderAgenda(); } catch(e){ console.error("agenda falhou", e); }
     try { renderVisits(); } catch(e){ console.error("plano de visitas falhou", e); }
     if (!homeMonth) homeMonth = todayStr().slice(0,7);
     var brands = brandList();
@@ -1072,7 +1073,7 @@
   function renderMeetingRow(id){
     var m = meetings[id];
     var row = el("div", "meeting-row");
-    row.appendChild(el("div", "meeting-row-date mono", formatDateShort(m.date)));
+    row.appendChild(el("div", "meeting-row-date mono", formatDateShort(m.date) + (validTime(m.time) ? " · " + m.time : "")));
     var main = el("div", "meeting-row-main");
     main.appendChild(el("div", "meeting-row-title", escapeHtml(m.title)));
     var sub = el("div", "meeting-row-sub");
@@ -1726,6 +1727,7 @@
       clientId: document.getElementById("meetingClient").value || null,
       projectId: document.getElementById("meetingProject").value || null,
       date: document.getElementById("meetingDate").value || todayStr(),
+      time: validTime(document.getElementById("meetingTime").value) ? document.getElementById("meetingTime").value : "",
       agenda: document.getElementById("meetingAgenda").value.trim(),
       notes: document.getElementById("meetingNotes").value.trim(),
       summary: document.getElementById("meetingSummary").value.trim(),
@@ -2453,7 +2455,7 @@
   function closeTaskModal(){ document.getElementById("taskModalOverlay").hidden = true; editingTaskId = null; }
 
   // ---------- meeting modal ----------
-  function openMeetingModal(id){
+  function openMeetingModal(id, presetDate){
     editingMeetingId = id || null;
     var overlay = document.getElementById("meetingModalOverlay");
     var title = document.getElementById("meetingModalTitle");
@@ -2463,6 +2465,7 @@
       title.textContent = "Editar reunião";
       document.getElementById("meetingTitle").value = m.title;
       document.getElementById("meetingDate").value = m.date || todayStr();
+      document.getElementById("meetingTime").value = validTime(m.time) ? m.time : "";
       populateClientSelect("meetingClient", m.clientId);
       populateProjectSelect("meetingProject", "meetingClient", m.projectId);
       document.getElementById("meetingAgenda").value = m.agenda || "";
@@ -2474,7 +2477,8 @@
     } else {
       title.textContent = "Nova reunião";
       document.getElementById("meetingTitle").value = "";
-      document.getElementById("meetingDate").value = todayStr();
+      document.getElementById("meetingDate").value = validIso(presetDate) ? presetDate : todayStr();
+      document.getElementById("meetingTime").value = "";
       populateClientSelect("meetingClient", activeClientFilter);
       populateProjectSelect("meetingProject", "meetingClient", null);
       document.getElementById("meetingAgenda").value = "";
@@ -2954,6 +2958,148 @@
   var visitsDay = null;
   var visitsLayer = null;
   var WEEKDAYS = ["domingo","segunda","terça","quarta","quinta","sexta","sábado"];
+
+  // ---------- agenda (Início) ----------
+  // Seven days from agendaStart (today by default): meetings and visits (with time when set),
+  // open task deadlines and project stages. Overdue ones show on top when the range includes today.
+  var agendaStart = null;
+  var AGENDA_WD = ["domingo","segunda","terça","quarta","quinta","sexta","sábado"];
+  var AGENDA_KIND = { reuniao:"Reunião", visita:"Visita", tarefa:"Prazo", etapa:"Etapa" };
+  function validTime(s){ return /^([01]\d|2[0-3]):[0-5]\d$/.test(String(s || "")); }
+
+  function agendaItemsFor(date){
+    var items = [];
+    Object.keys(meetings).forEach(function(id){
+      var m = meetings[id];
+      if (m.date !== date) return;
+      var isVisit = !!m.visit;
+      items.push({
+        kind: isVisit ? "visita" : "reuniao", time: validTime(m.time) ? m.time : "",
+        order: isVisit ? (m.visit.order || 0) : 0, title: m.title, clientId: m.clientId,
+        done: isVisit ? !!m.visit.done : false,
+        open: function(){ openMeetingModal(id); }
+      });
+    });
+    Object.keys(tasks).forEach(function(id){
+      var t = tasks[id];
+      if (t.due !== date || t.status === "done") return;
+      items.push({ kind:"tarefa", time:"", order:0, title:t.title, clientId:t.clientId, done:false,
+        open:function(){ openTaskModal(id); } });
+    });
+    Object.keys(projects).forEach(function(pid){
+      var p = projects[pid];
+      (p.schedule || []).forEach(function(st){
+        if (st.done || st.due !== date) return;
+        items.push({ kind:"etapa", time:"", order:0, title:st.name, sub:p.name, clientId:p.clientId, done:false,
+          open:function(){ openProjectModal(pid); } });
+      });
+    });
+    var rank = { reuniao:0, visita:0, tarefa:1, etapa:2 };
+    items.sort(function(a, b){
+      if (a.time && b.time && a.time !== b.time) return a.time < b.time ? -1 : 1;
+      if (!!a.time !== !!b.time) return a.time ? -1 : 1;
+      if (rank[a.kind] !== rank[b.kind]) return rank[a.kind] - rank[b.kind];
+      if (a.order !== b.order) return a.order - b.order;
+      return String(a.title).localeCompare(String(b.title), "pt");
+    });
+    return items;
+  }
+
+  function agendaOverdue(today){
+    var items = [];
+    Object.keys(tasks).forEach(function(id){
+      var t = tasks[id];
+      if (t.status === "done" || !validIso(t.due) || t.due >= today) return;
+      items.push({ kind:"tarefa", due:t.due, title:t.title, clientId:t.clientId, open:function(){ openTaskModal(id); } });
+    });
+    Object.keys(projects).forEach(function(pid){
+      var p = projects[pid];
+      (p.schedule || []).forEach(function(st){
+        if (st.done || !validIso(st.due) || st.due >= today) return;
+        items.push({ kind:"etapa", due:st.due, title:st.name, sub:p.name, clientId:p.clientId, open:function(){ openProjectModal(pid); } });
+      });
+    });
+    items.sort(function(a, b){ return a.due < b.due ? -1 : a.due > b.due ? 1 : 0; });
+    return items;
+  }
+
+  function agendaRow(it, lead){
+    var row = el("button", "agenda-item agenda-" + it.kind + (it.done ? " is-done" : ""));
+    row.type = "button";
+    row.appendChild(el("span", "agenda-time mono", escapeHtml(it.time || lead || "")));
+    var main = el("span", "agenda-main");
+    var top = el("span", "agenda-title");
+    top.appendChild(el("span", "agenda-kind", AGENDA_KIND[it.kind]));
+    top.appendChild(document.createTextNode(it.title || ""));
+    main.appendChild(top);
+    var subText = [clientName(it.clientId), it.sub].filter(Boolean).join(" · ");
+    if (subText){
+      var sub = el("span", "agenda-sub");
+      var color = clientColor(it.clientId);
+      if (color){ var dot = el("span", "client-dot"); dot.style.background = color; sub.appendChild(dot); }
+      sub.appendChild(document.createTextNode(subText));
+      main.appendChild(sub);
+    }
+    row.appendChild(main);
+    if (it.kind === "visita" && it.done) row.appendChild(el("span", "agenda-flag", "Feita"));
+    row.addEventListener("click", it.open);
+    return row;
+  }
+
+  function renderAgenda(){
+    var wrap = document.getElementById("agendaDays");
+    if (!wrap) return;
+    var today = todayStr();
+    var start = agendaStart || today;
+    var end = shiftIso(start, 6);
+    var label = document.getElementById("agendaRangeLabel");
+    label.textContent = start === today ? "Próximos 7 dias" : shortDate(start) + " – " + shortDate(end);
+    label.title = start === today ? "" : "Voltar a hoje";
+    wrap.innerHTML = "";
+    var total = 0;
+
+    if (start <= today && today <= end){
+      var late = agendaOverdue(today);
+      if (late.length){
+        var box = el("details", "agenda-late");
+        var sm = el("summary", "agenda-late-head");
+        sm.textContent = late.length + (late.length === 1 ? " prazo em atraso" : " prazos em atraso");
+        box.appendChild(sm);
+        late.forEach(function(it){ box.appendChild(agendaRow(it, shortDate(it.due))); });
+        wrap.appendChild(box);
+      }
+    }
+
+    for (var i = 0; i < 7; i++){
+      var day = shiftIso(start, i);
+      var items = agendaItemsFor(day);
+      total += items.length;
+      var d = new Date(day + "T00:00:00");
+      var dayText = d.getDate() + " " + MONTHS[d.getMonth()];
+      var sec = el("section", "agenda-day" + (day === today ? " is-today" : "") + (day < today ? " is-past" : "") + (items.length ? "" : " is-empty"));
+      var head = el("div", "agenda-day-head");
+      var rel = day === today ? "Hoje" : day === shiftIso(today, 1) ? "Amanhã" : AGENDA_WD[d.getDay()];
+      head.appendChild(el("span", "agenda-day-name", escapeHtml(rel)));
+      head.appendChild(el("span", "agenda-day-date mono", escapeHtml(dayText)));
+      if (!items.length) head.appendChild(el("span", "agenda-free", "Livre"));
+      var add = el("button", "icon-btn agenda-add", "+");
+      add.type = "button";
+      add.title = "Marcar reunião a " + dayText;
+      add.setAttribute("aria-label", add.title);
+      (function(dd){ add.addEventListener("click", function(){ openMeetingModal(null, dd); }); })(day);
+      head.appendChild(add);
+      sec.appendChild(head);
+      if (items.length){
+        var list = el("div", "agenda-list");
+        items.forEach(function(it){ list.appendChild(agendaRow(it)); });
+        sec.appendChild(list);
+      }
+      wrap.appendChild(sec);
+    }
+    document.getElementById("agendaSummary").textContent = total
+      ? total + (total === 1 ? " compromisso" : " compromissos") + (start === today ? " nos próximos 7 dias" : " nesta semana")
+      : "Nada agendado";
+  }
 
   function shiftIso(iso, n){
     var p = iso.split("-").map(Number);
@@ -3946,6 +4092,9 @@
       if (e.key === "Enter"){ e.preventDefault(); addPointDraft(); }
     });
     document.getElementById("homePrevMonthBtn").addEventListener("click", function(){ shiftHomeMonth(-1); });
+    document.getElementById("agendaPrevBtn").addEventListener("click", function(){ agendaStart = shiftIso(agendaStart || todayStr(), -7); renderAgenda(); });
+    document.getElementById("agendaNextBtn").addEventListener("click", function(){ agendaStart = shiftIso(agendaStart || todayStr(), 7); renderAgenda(); });
+    document.getElementById("agendaRangeLabel").addEventListener("click", function(){ agendaStart = null; renderAgenda(); });
     document.getElementById("visitsPrevDayBtn").addEventListener("click", function(){ visitsDay = shiftIso(visitsDay || todayStr(), -1); setVisitsStatus(""); renderVisits(); });
     document.getElementById("visitsNextDayBtn").addEventListener("click", function(){ visitsDay = shiftIso(visitsDay || todayStr(), 1); setVisitsStatus(""); renderVisits(); });
     document.getElementById("visitsDayLabel").addEventListener("click", function(){ visitsDay = todayStr(); setVisitsStatus(""); renderVisits(); });
