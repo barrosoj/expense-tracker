@@ -1,5 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 330 64" width="660" height="128">
-  <title>Quadro de Tarefas</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 214 64" width="428" height="128">
+  <title>Nuvanea</title>
   <defs>
     <linearGradient id="qt-bg-h" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#6366F1"/>
@@ -11,5 +11,5 @@
     <circle cx="29" cy="31" r="15"/>
     <path d="M32.5 38.5l6 6 12.5-14.5"/>
   </g>
-  <text x="80" y="42" font-family="Inter, 'Segoe UI Variable Text', 'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="29" letter-spacing="-0.6" fill="#111827"><tspan font-weight="700">Quadro</tspan><tspan font-weight="400" fill="#4B5563"> de Tarefas</tspan></text>
+  <text x="80" y="42" font-family="Inter, 'Segoe UI Variable Text', 'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="29" letter-spacing="-0.6" fill="#111827"><tspan font-weight="700">Nuvanea</tspan></text>
 </svg>

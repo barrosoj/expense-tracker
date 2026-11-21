@@ -101,7 +101,7 @@
   function formatDateShort(dateStr){
     if (!dateStr) return "—";
     var d = new Date(dateStr + "T00:00:00");
-    if (isNaN(d.getTime())) return dateStr;
+    if (isNaN(d.getTime())) return "—";
     return d.getDate() + " " + MONTHS[d.getMonth()] + " " + d.getFullYear();
   }
   function clientColor(id){ return (id && clients[id]) ? clients[id].color : null; }
@@ -109,7 +109,8 @@
   function nextPaletteColor(){ return PALETTE[Object.keys(clients).length % PALETTE.length]; }
   function genId(){ return "id" + Date.now().toString(36) + Math.random().toString(36).slice(2,8); }
   function formatBytes(n){
-    if (n == null) return "";
+    n = Number(n);
+    if (!isFinite(n) || n < 0) return "";
     if (n < 1024) return n + " B";
     if (n < 1024*1024) return (n/1024).toFixed(0) + " KB";
     return (n/(1024*1024)).toFixed(1) + " MB";
@@ -493,11 +494,12 @@
   // The Excel files live in the "Compras" and "Vendas" folders next to the app on this computer
   // (they are git-ignored, so never on GitHub). The app only reads them; it never changes or sends them.
   // They are found only when the app is opened from this computer (local server on the project folder).
+  // Purchases and my sales are read from the Excel files in the Google Drive folder
+  // (sub-folders Compras and Vendas). Nothing is read from this device's disk.
   var DATA_FOLDERS = { compra:["Compras","Compra"], venda:["Vendas","Venda"] };
-  var FOLDER_DATA_LOCAL = /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname);
-  var NOT_LOCAL_HINT = "Disponível só no computador (lido das pastas locais)";
   var KIND_LABEL = { compra:"compras", venda:"vendas" };
   var folderLoad = null;
+  var DRIVE_HINT = "Liga ao Google Drive para ver este valor";
 
   function setHomeImportStatus(kind, message, isError){
     var s = document.getElementById(kind === "venda" ? "homeSaleStatus" : "homePurchaseStatus");
@@ -508,43 +510,32 @@
       !document.querySelector("#homeFilesStatus .home-import-status.error");
   }
 
-  function isDataFileName(name){ return /\.(xlsx|csv)$/i.test(name) && name.indexOf("~$") !== 0; }
+  function driveReady(){ return !!(window.QuadroDrive && window.QuadroDrive.connected()); }
 
-  // Looks for the first Excel/CSV file in the kind's folder. Uses the folder listing when the
-  // local server provides one, else tries "<Pasta>/<Pasta>.xlsx" (e.g. Compras/Compras.xlsx).
-  function findFolderFile(kind){
-    var folders = DATA_FOLDERS[kind];
-    function tryFolder(i){
-      if (i >= folders.length) return Promise.resolve(null);
-      var folder = folders[i];
-      return fetch(folder + "/", { cache:"no-store" }).then(function(res){
-        if (!res.ok || (res.headers.get("content-type") || "").indexOf("text/html") < 0) return null;
-        return res.text().then(function(html){
-          var doc = new DOMParser().parseFromString(html, "text/html");
-          var names = Array.prototype.map.call(doc.querySelectorAll("a[href]"), function(a){
-            var href = a.getAttribute("href").split(/[?#]/)[0];
-            try { href = decodeURIComponent(href); } catch(e){}
-            return href.split("/").pop();
-          }).filter(isDataFileName).sort();
-          return names.length ? folder + "/" + names[0] : null;
-        });
-      }).catch(function(){ return null; }).then(function(found){
-        if (found) return found;
-        var guess = folder + "/" + folder + ".xlsx";
-        return fetch(guess, { method:"HEAD", cache:"no-store" })
-          .then(function(res){ return res.ok ? guess : null; })
-          .catch(function(){ return null; });
-      }).then(function(found){ return found || tryFolder(i + 1); });
-    }
-    return tryFolder(0);
+  // "Ligar ao Google Drive" banner: shown while the Drive folder is configured but not connected.
+  function updateDriveBanner(){
+    var b = document.getElementById("driveConnectBanner");
+    var D = window.QuadroDrive;
+    b.hidden = !(D && D.configured() && !D.connected());
   }
 
-  function readFolderFile(path){
-    return fetch(path.split("/").map(encodeURIComponent).join("/"), { cache:"no-store" }).then(function(res){
-      if (!res.ok) throw new Error("não foi possível abrir " + path);
-      if (/\.csv$/i.test(path)) return res.text().then(parseCsvText);
+  // First spreadsheet (by name) in the kind's Drive sub-folder, or null.
+  function findFolderFile(kind){
+    var D = window.QuadroDrive;
+    return D.findFolder(DATA_FOLDERS[kind], false).then(function(folderId){
+      if (!folderId) return null;
+      return D.listChildren(folderId).then(function(files){
+        var sheets = files.filter(function(f){ return D.isSpreadsheet(f) && f.name.indexOf("~$") !== 0; });
+        return sheets.length ? sheets[0] : null;
+      });
+    });
+  }
+
+  function readFolderFile(file){
+    return window.QuadroDrive.download(file).then(function(buf){
+      if (/\.csv$/i.test(file.name)) return parseCsvText(new TextDecoder("utf-8").decode(buf));
       if (!window.QuadroXlsx) throw new Error("leitor de Excel indisponível");
-      return res.arrayBuffer().then(window.QuadroXlsx.read).then(function(r){ return r.rows; });
+      return window.QuadroXlsx.read(buf).then(function(r){ return r.rows; });
     });
   }
 
@@ -560,28 +551,28 @@
   }
 
   function loadKind(kind){
-    return findFolderFile(kind).then(function(path){
-      if (!path){
-        setHomeImportStatus(kind, "Sem ficheiro na pasta " + DATA_FOLDERS[kind][0] + ".", false);
+    return findFolderFile(kind).then(function(file){
+      if (!file){
+        setHomeImportStatus(kind, "Sem ficheiro na pasta " + DATA_FOLDERS[kind][0] + " do Google Drive.", false);
         return;
       }
-      return readFolderFile(path).then(function(rows){
+      return readFolderFile(file).then(function(rows){
         var parsed = kind === "venda" ? parseMySalesRows(rows) : parsePurchaseRows(rows);
         applyParsed(kind, parsed);
         var d = new Date();
-        setHomeImportStatus(kind, "Valores de " + path + " (lido às " + String(d.getHours()).padStart(2,"0") + ":" +
+        setHomeImportStatus(kind, "Valores de " + file.name + " (lido às " + String(d.getHours()).padStart(2,"0") + ":" +
           String(d.getMinutes()).padStart(2,"0") + (parsed.year ? ", meses de " + parsed.year : "") + ").", false);
       });
     }).catch(function(e){
+      if (e && e.notConnected){ updateDriveBanner(); return; }
       setHomeImportStatus(kind, "Não foi possível ler o ficheiro de " + KIND_LABEL[kind] + ": " + (e && e.message ? e.message : e) + ".", true);
     });
   }
 
   // Re-reads both folders (on start and every time "Início" is opened), so edits to the Excel files show up.
   function loadFolderData(){
-    // The Compras/Vendas folders only exist on the PC (local server); elsewhere (phone, GitHub
-    // Pages) there is nothing to read, so skip the lookups instead of logging 404 errors.
-    if (!FOLDER_DATA_LOCAL) return Promise.resolve();
+    updateDriveBanner();
+    if (!driveReady()) return Promise.resolve();
     if (folderLoad) return folderLoad;
     salesData = {};
     mySales = {};
@@ -601,6 +592,7 @@
 
   function renderHome(){
     try { renderClientMap(); } catch(e){ console.error("mapa falhou", e); }
+    try { renderVisits(); } catch(e){ console.error("plano de visitas falhou", e); }
     if (!homeMonth) homeMonth = todayStr().slice(0,7);
     var brands = brandList();
 
@@ -613,7 +605,7 @@
     document.getElementById("homeSaleValue").textContent = hasSale ? formatCurrency(sale) : "—";
     document.getElementById("homeSaleHint").textContent = hasSale
       ? "As minhas vendas em " + monthLabel(homeMonth)
-      : (FOLDER_DATA_LOCAL ? "Sem valor de venda para este mês" : NOT_LOCAL_HINT);
+      : (driveReady() ? "Sem valor de venda para este mês" : DRIVE_HINT);
 
     var rows = brands.map(function(b){
       var entry = monthData[findBrandKey(monthData, b)];
@@ -629,7 +621,7 @@
     document.getElementById("homePurchaseValue").textContent = brandsWithBuy ? formatCurrency(totalBuy) : "—";
     document.getElementById("homePurchaseHint").textContent = brandsWithBuy
       ? "Soma de " + brandsWithBuy + " marca(s) em " + monthLabel(homeMonth)
-      : (FOLDER_DATA_LOCAL ? "Sem valores de compra para este mês" : NOT_LOCAL_HINT);
+      : (driveReady() ? "Sem valores de compra para este mês" : DRIVE_HINT);
 
     // Brands with a value first (largest first), then the ones without a value.
     rows.sort(function(a, b){
@@ -640,8 +632,8 @@
     });
     var list = document.getElementById("homeBrandList");
     list.innerHTML = "";
-    // Per-brand purchases come only from the PC's Compras folder: hide the empty card elsewhere.
-    list.parentNode.hidden = !FOLDER_DATA_LOCAL;
+    // Per-brand purchases come from the Drive's Compras folder: hide the empty card until connected.
+    list.parentNode.hidden = !driveReady();
     rows.forEach(function(r){
       var li = el("li", "home-brand-row" + (r.compra === null ? " is-empty" : ""));
       var name = el("span", "home-brand-name");
@@ -1089,6 +1081,7 @@
     sub.appendChild(document.createTextNode(clientName(m.clientId) || "Sem cliente"));
     main.appendChild(sub);
     row.appendChild(main);
+    if (m.visit) row.appendChild(el("div", "meeting-row-badge visit-badge" + (m.visit.done ? " is-done" : ""), m.visit.done ? "Visita feita" : "Visita planeada"));
     var pending = (m.actions || []).filter(function(a){ return !a.done; }).length;
     if (pending > 0){
       row.appendChild(el("div", "meeting-row-badge", pending + " ação" + (pending > 1 ? "ões" : "") + " pendente" + (pending > 1 ? "s" : "")));
@@ -1534,7 +1527,7 @@
     html += "<th class=\"total-cell\">Total</th></tr></thead><tbody>";
     days.forEach(function(d){
       var row = byDay[d];
-      html += "<tr data-date=\"" + d + "\"><td>" + escapeHtml(formatDateShort(d)) + "</td>";
+      html += "<tr data-date=\"" + escapeHtml(d) + "\"><td>" + escapeHtml(formatDateShort(d)) + "</td>";
       EXPENSE_CATEGORIES.forEach(function(c){
         html += row[c] > 0 ? "<td class=\"mono\">" + formatCurrency(row[c]) + "</td>" : "<td class=\"mono amount-empty\">—</td>";
       });
@@ -1634,10 +1627,12 @@
     });
     function csvField(v){
       var s = String(v == null ? "" : v);
-      if (/[;"\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+      // Text starting with = + - @ would run as a formula when the CSV is opened in Excel.
+      if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+([.,]\d+)?$/.test(s)) s = "'" + s;
+      if (/[;"\n\r]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
       return s;
     }
-    var lines = ["Data;Categoria;Com quem;Cliente;Fornecedor;Descrição;Valor (€)"];
+    var lines = ["Data;Categoria;Com quem;Cliente;Fornecedor;Descrição;Valor (€);NIF vendedor;Documento;ATCUD;IVA (€)"];
     ids.forEach(function(id){
       var x = expenses[id];
       lines.push([
@@ -1647,7 +1642,11 @@
         csvField(clientName(x.clientId) || ""),
         csvField(x.supplier || ""),
         csvField(x.description || ""),
-        csvField((Number(x.amount)||0).toFixed(2).replace(".", ","))
+        csvField((Number(x.amount)||0).toFixed(2).replace(".", ",")),
+        csvField(x.invoice ? x.invoice.nif : ""),
+        csvField(x.invoice ? ((x.invoice.type || "") + " " + (x.invoice.number || "")).trim() : ""),
+        csvField(x.invoice ? x.invoice.atcud : ""),
+        csvField(x.invoice && x.invoice.vat ? Number(x.invoice.vat).toFixed(2).replace(".", ",") : "")
       ].join(";"));
     });
     var csv = lines.join("\r\n");
@@ -1829,8 +1828,16 @@
   function openDocumentBlob(id, name){
     idbGet(id).then(function(rec){
       if (!rec || !rec.blob){ alert("Não foi possível encontrar este documento neste navegador."); return; }
-      var url = URL.createObjectURL(rec.blob);
-      window.open(url, "_blank");
+      // A blob opens with this app's origin, so only types that can't run code are shown;
+      // anything else (HTML, SVG, …) is saved as a download instead of opened.
+      var type = String(rec.blob.type || "").toLowerCase();
+      var viewable = /^(application\/pdf|image\/(png|jpe?g|gif|webp|bmp)|text\/plain)$/.test(type);
+      var url = URL.createObjectURL(viewable ? rec.blob : new Blob([rec.blob], { type:"application/octet-stream" }));
+      var link = document.createElement("a");
+      link.href = url;
+      if (viewable){ link.target = "_blank"; link.rel = "noopener"; }
+      else link.download = name || "documento";
+      document.body.appendChild(link); link.click(); link.remove();
       setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
     }).catch(function(err){
       console.error("openDocumentBlob failed", err);
@@ -1893,6 +1900,7 @@
       supplier: document.getElementById("expenseSupplier").value.trim(),
       description: description,
       amount: amount,
+      invoice: invoiceDraft,
       updatedAt: Date.now()
     };
     if (isMealCategory(payload.category)){
@@ -2065,13 +2073,12 @@
       : "Vai para a coluna Gasóleo do mapa de Despesas.";
   }
 
-  // ---------- automatic Excel files (only when opened through servidor_local.py) ----------
+  // ---------- automatic Excel files (written to the Google Drive "Despesas" folder) ----------
   // From the templates in the "Despesas" folder the app writes:
   //   "Despesas AAAA.xlsx"        — everything except fleet-card fuel, in the template's columns
   //   "Combustiveis AAAA-MM.xlsx" — fleet-card fuel of that month
   // A file is only rewritten when its expenses changed (fingerprint kept on this device).
   var EXCEL_COLUMN = { viatura:"D", material:"E", combustivel:"F", almocos:"G", jantares:"H", refeicoes:"I", estadias:"J", parques:"L", portagens:"M", outros:"N" };
-  var excelWriterAvailable = null; // null = not checked yet
   var excelSyncTimer = null, excelSyncRunning = false, excelSyncAgain = false;
   var EXCEL_SIG_KEY = "qt_excel_sig";
   var excelFilesSeen = {}; // output files confirmed to exist in the folder during this session
@@ -2083,22 +2090,16 @@
     s.hidden = !text;
     s.textContent = text || "";
     s.classList.toggle("error", !!isError);
-    document.getElementById("excelSyncRetryBtn").hidden = !showRetry;
+    var retry = document.getElementById("excelSyncRetryBtn");
+    retry.hidden = !showRetry;
+    retry.textContent = window.QuadroDrive && !window.QuadroDrive.connected() ? "Ligar ao Google Drive" : "Gravar Excel agora";
   }
 
+  // The Excel files are written to the "Despesas" sub-folder of the Google Drive folder.
   function checkExcelWriter(){
-    if (excelWriterAvailable !== null) return Promise.resolve(excelWriterAvailable);
-    if (!/^(127\.0\.0\.1|localhost)$/.test(location.hostname) || !window.QuadroExcel){
-      excelWriterAvailable = false;
-      return Promise.resolve(false);
-    }
-    return fetch("api/estado", { cache:"no-store" }).then(function(r){
-      return r.ok ? r.json() : null;
-    }).then(function(j){
-      excelWriterAvailable = !!(j && j.gravarExcel);
-      return excelWriterAvailable;
-    }).catch(function(){ excelWriterAvailable = false; return false; });
+    return Promise.resolve(!!(window.QuadroExcel && window.QuadroDrive && window.QuadroDrive.configured()));
   }
+  function despesasFolder(){ return window.QuadroDrive.findFolder(["Despesas"], true); }
 
   function scheduleExcelSync(){
     clearTimeout(excelSyncTimer);
@@ -2144,21 +2145,16 @@
   }
 
   function fetchTemplate(name){
-    return fetch("Despesas/" + encodeURIComponent(name), { cache:"no-store" }).then(function(r){
-      if (!r.ok) throw new Error("falta o modelo " + name + " na pasta Despesas");
-      return r.arrayBuffer();
+    return despesasFolder().then(function(folderId){
+      return window.QuadroDrive.listChildren(folderId);
+    }).then(function(files){
+      var f = files.filter(function(x){ return x.name === name; })[0];
+      if (!f) throw new Error("falta o modelo " + name + " na pasta Despesas do Google Drive");
+      return window.QuadroDrive.download(f);
     });
   }
   function putExcel(name, bytes){
-    return fetch("Despesas/" + encodeURIComponent(name), {
-      method:"PUT", body:bytes,
-      headers:{ "Content-Type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }
-    }).then(function(r){
-      if (r.ok) return;
-      return r.json().catch(function(){ return {}; }).then(function(j){
-        throw new Error(j.erro || ("erro " + r.status + " ao gravar " + name));
-      });
-    });
+    return despesasFolder().then(function(folderId){ return window.QuadroDrive.upload(folderId, name, bytes); });
   }
 
   function runExcelSync(force){
@@ -2181,7 +2177,13 @@
         if (!templates[name]) templates[name] = fetchTemplate(name);
         return templates[name];
       }
-      var written = [], errors = [];
+      var namesInDrive = null;
+      function driveNames(){
+        if (!namesInDrive) namesInDrive = despesasFolder().then(function(id){ return window.QuadroDrive.listChildren(id); })
+          .then(function(files){ var m = {}; files.forEach(function(f){ m[f.name] = true; }); return m; });
+        return namesInDrive;
+      }
+      var written = [], errors = [], needDrive = false;
       var names = Object.keys(outputs).sort();
       var chain = Promise.resolve();
       names.forEach(function(name){
@@ -2194,9 +2196,10 @@
           var needed;
           if (force || sigs[name] !== sig) needed = Promise.resolve(true);
           else if (excelFilesSeen[name]) needed = Promise.resolve(false);
-          else needed = fetch("Despesas/" + encodeURIComponent(name), { method:"HEAD", cache:"no-store" })
-            .then(function(r){ if (r.ok) excelFilesSeen[name] = true; return !r.ok; })
-            .catch(function(){ return false; });
+          else needed = driveNames().then(function(present){
+            if (present[name]) excelFilesSeen[name] = true;
+            return !present[name];
+          }).catch(function(){ return false; });
           return needed.then(function(yes){
             if (!yes) return;
             return template(tplName).then(function(tpl){
@@ -2208,15 +2211,22 @@
               excelFilesSeen[name] = true;
               written.push(name);
             });
-          }).catch(function(e){ errors.push(e && e.message ? e.message : String(e)); });
+          }).catch(function(e){
+            if (e && e.notConnected) needDrive = true;
+            else errors.push(e && e.message ? e.message : String(e));
+          });
         });
       });
       return chain.then(function(){
         try { localStorage.setItem(sigKey, JSON.stringify(sigs)); } catch(e){}
         var d = new Date(), at = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
-        if (errors.length) setExcelStatus("Excel não atualizado: " + errors[0], true, true);
+        if (needDrive){
+          updateDriveBanner();
+          setExcelStatus("Despesas por gravar no Excel: liga ao Google Drive.", true, true);
+        }
+        else if (errors.length) setExcelStatus("Excel não atualizado: " + errors[0], true, true);
         else if (written.length) setExcelStatus("Excel atualizado às " + at + ": " + written.join(", "), false, false);
-        else if (names.length) setExcelStatus("Excel em dia (pasta Despesas).", false, false);
+        else if (names.length) setExcelStatus("Excel em dia (pasta Despesas do Google Drive).", false, false);
         else setExcelStatus("", false, false);
       });
     }).then(function(){
@@ -2542,10 +2552,89 @@
     status.textContent = message;
     status.classList.toggle("error", !!isError);
   }
+  // ---------- invoice QR code (faturas portuguesas) ----------
+  // Fields of the invoice read from its QR code, kept with the expense: { nif, type, number, atcud, vat, total }.
+  var invoiceDraft = null;
+  var invoiceFallbackDescription = "";
+
+  function invoiceSummary(inv){
+    var parts = [inv.typeLabel || "Fatura"];
+    if (inv.number) parts[0] += " " + inv.number;
+    parts.push("NIF " + inv.nif);
+    parts.push("total " + formatCurrency(inv.total) + (inv.vat ? " (IVA " + formatCurrency(inv.vat) + ")" : ""));
+    return parts.join(" · ");
+  }
+  // Latest expense from the same seller (by NIF), to reuse its supplier name and description.
+  function knownSeller(nif){
+    var best = null;
+    Object.keys(expenses).forEach(function(id){
+      var x = expenses[id];
+      if (id === editingExpenseId || !x.invoice || x.invoice.nif !== nif) return;
+      if (!best || (x.updatedAt || 0) > (best.updatedAt || 0)) best = x;
+    });
+    return best;
+  }
+  function duplicateInvoice(inv){
+    var found = null;
+    Object.keys(expenses).forEach(function(id){
+      var x = expenses[id], o = x.invoice;
+      if (id === editingExpenseId || !o) return;
+      if ((inv.atcud && o.atcud === inv.atcud && o.nif === inv.nif) || (inv.number && o.nif === inv.nif && o.number === inv.number)) found = x;
+    });
+    return found;
+  }
+  function applyInvoice(inv){
+    invoiceDraft = { nif:inv.nif, type:inv.type, number:inv.number, atcud:inv.atcud, vat:inv.vat, total:inv.total };
+    document.getElementById("expenseDate").value = inv.date;
+    document.getElementById("expenseAmount").value = inv.total.toFixed(2).replace(".", ",");
+    document.getElementById("expenseAmountError").hidden = true;
+    var desc = document.getElementById("expenseDescription");
+    var seller = knownSeller(inv.nif);
+    invoiceFallbackDescription = "";
+    if (seller){
+      if (seller.description) desc.value = seller.description;
+      var sup = document.getElementById("expenseSupplier");
+      if (seller.supplier && !sup.value) sup.value = seller.supplier;
+    } else if (!desc.value.trim()){
+      invoiceFallbackDescription = inv.typeLabel + (inv.number ? " " + inv.number : "");
+      desc.value = invoiceFallbackDescription;
+    }
+    var msg = "Lido pelo código QR: " + invoiceSummary(inv) + ".";
+    if (!inv.nifValid) msg += " Atenção: o NIF do vendedor não é válido, confirma os dados.";
+    if (inv.type === "NC") msg += " É uma nota de crédito (devolução), não uma despesa.";
+    var dup = duplicateInvoice(inv);
+    if (dup) msg += " Esta fatura já foi registada em " + formatDateShort(dup.date) + ".";
+    setReceiptScanStatus(msg, !!dup || !inv.nifValid || inv.type === "NC");
+    return !!seller;
+  }
+
+  // A photo is first searched for the invoice QR code (exact, offline); OCR is the fallback and,
+  // after a QR read of an unknown seller, only suggests the shop name for the description.
   function scanReceipt(file){
     var button = document.getElementById("scanReceiptBtn");
     button.disabled = true;
-    setReceiptScanStatus("A preparar a leitura do recibo…", false);
+    setReceiptScanStatus("A procurar o código QR da fatura…", false);
+    var qr = window.QuadroInvoiceQR ? window.QuadroInvoiceQR.scan(file).catch(function(err){
+      console.warn("invoice QR scan failed", err);
+      return null;
+    }) : Promise.resolve(null);
+    return qr.then(function(inv){
+      if (!inv) return ocrReceipt(file, false);
+      var known = applyInvoice(inv);
+      if (known || !window.ReceiptScanner) return;
+      var qrStatus = document.getElementById("receiptScanStatus");
+      var keep = { text:qrStatus.textContent, error:qrStatus.classList.contains("error") };
+      return window.ReceiptScanner.scan(file).then(function(s){
+        var desc = document.getElementById("expenseDescription");
+        if (s && s.description && desc.value === invoiceFallbackDescription) desc.value = s.description;
+      }).catch(function(){}).then(function(){ setReceiptScanStatus(keep.text, keep.error); });
+    }).then(function(){
+      button.disabled = false;
+    });
+  }
+
+  function ocrReceipt(file){
+    setReceiptScanStatus("Sem código QR legível; a ler o texto do recibo…", false);
     return window.ReceiptScanner.scan(file, function(progress){
       if (!progress || !progress.status) return;
       var labels = {
@@ -2573,8 +2662,6 @@
     }).catch(function(error){
       console.error("receipt scan failed", error);
       setReceiptScanStatus(error && error.message ? error.message : "Não foi possível ler o recibo. Podes preencher manualmente.", true);
-    }).then(function(){
-      button.disabled = false;
     });
   }
 
@@ -2594,6 +2681,7 @@
       document.getElementById("expenseDescription").value = x.description || "";
       fillFuelFields(x);
       fillMealFields(x);
+      invoiceDraft = x.invoice || null;
       deleteBtn.hidden = false;
       resetConfirm(deleteBtn, "Eliminar");
     } else {
@@ -2606,9 +2694,13 @@
       document.getElementById("expenseDescription").value = "";
       fillFuelFields(null);
       fillMealFields(null);
+      invoiceDraft = null;
       deleteBtn.hidden = true;
     }
-    setReceiptScanStatus("A foto sugere os campos; confirma ou edita antes de guardar.", false);
+    invoiceFallbackDescription = "";
+    setReceiptScanStatus(invoiceDraft
+      ? "Fatura associada: " + invoiceSummary(invoiceDraft) + "."
+      : "A foto lê o código QR da fatura (ou o texto do talão); confirma antes de guardar.", false);
     document.getElementById("expenseAmountError").hidden = true;
     overlay.hidden = false;
     setTimeout(function(){ document.getElementById("expenseAmount").focus(); }, 0);
@@ -2856,6 +2948,645 @@
     renderClientsList(); render();
   }
 
+  // ---------- daily visit plan (plano de visitas) ----------
+  // A planned visit is a meeting with visit:{ order, done, doneAt } on that date: it syncs like any
+  // meeting and its notes, summary and actions are written in the meeting form.
+  var visitsDay = null;
+  var visitsLayer = null;
+  var WEEKDAYS = ["domingo","segunda","terça","quarta","quinta","sexta","sábado"];
+
+  function shiftIso(iso, n){
+    var p = iso.split("-").map(Number);
+    var d = new Date(p[0], p[1] - 1, p[2] + n);
+    return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+  }
+  function visitsDayLabel(iso){
+    var t = todayStr();
+    var rel = iso === t ? "Hoje" : iso === shiftIso(t, 1) ? "Amanhã" : iso === shiftIso(t, -1) ? "Ontem"
+      : WEEKDAYS[new Date(iso + "T00:00:00").getDay()];
+    return rel + " · " + formatDateShort(iso);
+  }
+  function visitIdsFor(date){
+    return Object.keys(meetings).filter(function(id){ var m = meetings[id]; return m.visit && m.date === date; })
+      .sort(function(a, b){ return (meetings[a].visit.order || 0) - (meetings[b].visit.order || 0); });
+  }
+  function visitClient(id){ return clients[meetings[id].clientId] || null; }
+  function visitPoint(id){ var c = visitClient(id); return hasLocation(c) ? { lat:c.lat, lng:c.lng } : null; }
+  function haversineKm(a, b){
+    var r = Math.PI / 180;
+    var dLat = (b.lat - a.lat) * r, dLng = (b.lng - a.lng) * r;
+    var h = Math.pow(Math.sin(dLat / 2), 2) + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.pow(Math.sin(dLng / 2), 2);
+    return 2 * 6371 * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+  function pathKm(points){
+    var km = 0;
+    for (var i = 1; i < points.length; i++) km += haversineKm(points[i - 1], points[i]);
+    return km;
+  }
+  function formatKm(km){ return km < 10 ? km.toFixed(1).replace(".", ",") : String(Math.round(km)); }
+  function formatMin(min){
+    min = Math.round(min);
+    return min < 60 ? min + " min" : Math.floor(min / 60) + " h " + String(min % 60).padStart(2, "0");
+  }
+
+  // Road distances and times come from OSRM (OpenStreetMap routing, router.project-osrm.org).
+  // Only the visits' coordinates are sent — never client names. Offline or on error the plan
+  // falls back to straight-line distances and says so.
+  var OSRM = "https://router.project-osrm.org/";
+  var roadCache = {};
+  function osrmCoords(points){
+    return points.map(function(p){ return p.lng.toFixed(5) + "," + p.lat.toFixed(5); }).join(";");
+  }
+  function osrmGet(path){
+    var ctrl = window.AbortController ? new AbortController() : null;
+    var timer = setTimeout(function(){ if (ctrl) ctrl.abort(); }, 12000);
+    return fetch(OSRM + path, ctrl ? { signal: ctrl.signal } : {}).then(function(res){
+      if (!res.ok) throw new Error("serviço de rotas respondeu " + res.status);
+      return res.json();
+    }).then(function(j){
+      if (!j || j.code !== "Ok") throw new Error("rota não encontrada");
+      return j;
+    }).finally(function(){ clearTimeout(timer); });
+  }
+  function num(v){ v = Number(v); return isFinite(v) && v >= 0 ? v : null; }
+  // Route through `points` in that order: { km, min, legs:[{km,min}], line:[[lat,lng],…] }
+  function roadRoute(points){
+    var key = "r:" + osrmCoords(points);
+    if (roadCache[key]) return roadCache[key];
+    var p = osrmGet("route/v1/driving/" + osrmCoords(points) + "?overview=full&geometries=geojson&steps=false").then(function(j){
+      var r = j.routes && j.routes[0];
+      if (!r || num(r.distance) == null || !r.geometry || !Array.isArray(r.geometry.coordinates)) throw new Error("rota inválida");
+      return {
+        km: r.distance / 1000, min: (num(r.duration) || 0) / 60,
+        legs: (r.legs || []).map(function(l){ return { km: (num(l.distance) || 0) / 1000, min: (num(l.duration) || 0) / 60 }; }),
+        line: r.geometry.coordinates.filter(function(c){ return Array.isArray(c) && isFinite(c[0]) && isFinite(c[1]); })
+          .map(function(c){ return [Number(c[1]), Number(c[0])]; })
+      };
+    });
+    roadCache[key] = p;
+    p.catch(function(){ delete roadCache[key]; });
+    return p;
+  }
+  // Driving-time matrix (minutes) between all `points`; null where there is no road.
+  function roadMatrix(points){
+    return osrmGet("table/v1/driving/" + osrmCoords(points) + "?annotations=duration").then(function(j){
+      if (!Array.isArray(j.durations) || j.durations.length !== points.length) throw new Error("tabela inválida");
+      return j.durations.map(function(row){ return (row || []).map(function(v){ v = num(v); return v == null ? null : v / 60; }); });
+    });
+  }
+  function setVisitsStatus(text, isError){
+    var s = document.getElementById("visitsStatus");
+    s.textContent = text || "";
+    s.classList.toggle("error", !!isError);
+  }
+  function updateVisit(id, changes){
+    var m = meetings[id];
+    meetings[id] = Object.assign({}, m, { visit: Object.assign({}, m.visit, changes), updatedAt: Date.now() });
+  }
+  // Rewrites order 1..n following `ids`, touching only the visits whose order changed.
+  function renumberVisits(ids){
+    ids.forEach(function(id, i){ if (meetings[id].visit.order !== i + 1) updateVisit(id, { order: i + 1 }); });
+  }
+
+  function addVisit(cid){
+    if (!clients[cid]) return;
+    if (!visitsDay) visitsDay = todayStr();
+    var ids = visitIdsFor(visitsDay);
+    if (ids.some(function(id){ return meetings[id].clientId === cid; })){
+      setVisitsStatus(clients[cid].name + " já está no plano de " + visitsDayLabel(visitsDay).toLowerCase() + ".", true);
+      return;
+    }
+    meetings[genId()] = {
+      title: "Visita a " + clients[cid].name, clientId: cid, projectId: null, date: visitsDay,
+      agenda: "", notes: "", summary: "", actions: [],
+      visit: { order: ids.length + 1, done: false },
+      createdAt: Date.now(), updatedAt: Date.now()
+    };
+    saveStore();
+    setVisitsStatus(clients[cid].name + " adicionado ao plano.", false);
+    renderVisits();
+  }
+  function moveVisit(id, delta){
+    var ids = visitIdsFor(visitsDay);
+    var i = ids.indexOf(id), j = i + delta;
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    ids[i] = ids[j]; ids[j] = id;
+    renumberVisits(ids);
+    saveStore(); renderVisits();
+  }
+  function toggleVisitDone(id){
+    var done = !meetings[id].visit.done;
+    updateVisit(id, { done: done, doneAt: done ? new Date().toISOString() : null });
+    saveStore();
+    setVisitsStatus(done ? "Visita registada. Toca no nome do cliente para escrever as notas da visita." : "", false);
+    renderVisits();
+  }
+  function removeVisit(id){
+    var m = meetings[id];
+    var hasContent = m.notes || m.summary || m.agenda || (m.actions && m.actions.length);
+    if (hasContent && !window.confirm("Esta visita tem notas. Retirar do plano e apagar as notas?")) return;
+    delete meetings[id];
+    renumberVisits(visitIdsFor(visitsDay));
+    saveStore(); setVisitsStatus("", false); renderVisits();
+  }
+
+  // Shortest open path over nodes 0..n-1 by `cost(i, j)`: nearest neighbour, then 2-opt.
+  // With a start (node 0 = where the phone is) the path begins there; node 0 isn't returned.
+  function bestOrder(n, hasStart, cost){
+    var start = hasStart ? 0 : null, left = [], path = [], cur = start;
+    for (var k = hasStart ? 1 : 0; k < n; k++) left.push(k);
+    if (!hasStart && left.length){
+      // No start: begin at the stop whose nearest-neighbour tour is shortest.
+      var best = null;
+      left.forEach(function(first){
+        var cand = bestOrderFrom(first, left.filter(function(x){ return x !== first; }), cost);
+        if (!best || pathCost(null, cand, cost) < pathCost(null, best, cost)) best = cand;
+      });
+      return twoOpt(null, best, cost);
+    }
+    while (left.length){
+      var bi = 0, bd = Infinity;
+      for (var i = 0; i < left.length; i++){
+        var d = cost(cur, left[i]);
+        if (d < bd){ bd = d; bi = i; }
+      }
+      cur = left[bi];
+      path.push(left.splice(bi, 1)[0]);
+    }
+    return twoOpt(start, path, cost);
+  }
+  function bestOrderFrom(first, rest, cost){
+    var path = [first], left = rest.slice(), cur = first;
+    while (left.length){
+      var bi = 0, bd = Infinity;
+      for (var i = 0; i < left.length; i++){ var d = cost(cur, left[i]); if (d < bd){ bd = d; bi = i; } }
+      cur = left[bi]; path.push(left.splice(bi, 1)[0]);
+    }
+    return path;
+  }
+  function pathCost(start, path, cost){
+    var s = 0, prev = start;
+    path.forEach(function(x){ if (prev != null) s += cost(prev, x); prev = x; });
+    return s;
+  }
+  function twoOpt(start, path, cost){
+    var improved = true, guard = 0;
+    while (improved && guard++ < 50){
+      improved = false;
+      for (var a = 0; a < path.length - 1; a++){
+        for (var b = a + 1; b < path.length; b++){
+          var cand = path.slice(0, a).concat(path.slice(a, b + 1).reverse(), path.slice(b + 1));
+          if (pathCost(start, cand, cost) + 1e-9 < pathCost(start, path, cost)){ path = cand; improved = true; }
+        }
+      }
+    }
+    return path;
+  }
+  function currentPosition(){
+    return new Promise(function(resolve){
+      if (!navigator.geolocation){ resolve(null); return; }
+      navigator.geolocation.getCurrentPosition(
+        function(pos){ resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }); },
+        function(){ resolve(null); },
+        { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 }
+      );
+    });
+  }
+  function optimizeVisits(){
+    var ids = visitIdsFor(visitsDay);
+    var done = ids.filter(function(id){ return meetings[id].visit.done; });
+    var pending = ids.filter(function(id){ return !meetings[id].visit.done; });
+    var located = pending.filter(function(id){ return visitPoint(id); }).map(function(id){ return { id:id, p:visitPoint(id) }; });
+    var unlocated = pending.filter(function(id){ return !visitPoint(id); });
+    if (located.length < 2){ setVisitsStatus("Precisas de pelo menos 2 visitas por fazer com localização para otimizar.", true); return; }
+    var btn = document.getElementById("visitsOptimizeBtn");
+    btn.disabled = true;
+    setVisitsStatus("A obter a tua localização…", false);
+    var here = null, byRoad = true;
+    currentPosition().then(function(pos){
+      here = pos;
+      setVisitsStatus("A calcular os tempos de condução pela estrada…", false);
+      var pts = (here ? [here] : []).concat(located.map(function(s){ return s.p; }));
+      return roadMatrix(pts).then(function(m){
+        return function(i, j){ var v = m[i] && m[i][j]; return v == null ? 1e6 : v; };
+      }, function(err){
+        console.warn("road matrix failed", err);
+        byRoad = false;
+        return function(i, j){ return haversineKm(pts[i], pts[j]); };
+      }).then(function(cost){
+        var order = bestOrder(pts.length, !!here, cost);
+        var path = order.map(function(i){ return located[here ? i - 1 : i]; });
+        renumberVisits(done.concat(path.map(function(s){ return s.id; }), unlocated));
+        saveStore(); renderVisits();
+        var from = here ? "a partir da tua localização" : "(sem a tua localização: o percurso mais curto entre as visitas)";
+        var tail = unlocated.length ? "; " + unlocated.length + " sem localização ficam no fim" : "";
+        var routePts = (here ? [here] : []).concat(path.map(function(s){ return s.p; }));
+        if (!byRoad){
+          setVisitsStatus("Ordem otimizada " + from + " em linha reta (sem ligação ao serviço de rotas) · ≈ " + formatKm(pathKm(routePts)) + " km" + tail + ".", false);
+          return;
+        }
+        return roadRoute(routePts).then(function(r){
+          setVisitsStatus("Ordem otimizada pela estrada " + from + " · " + formatKm(r.km) + " km · " + formatMin(r.min) + " de condução" + tail + ".", false);
+        }, function(){
+          setVisitsStatus("Ordem otimizada pela estrada " + from + tail + ".", false);
+        });
+      });
+    }).catch(function(err){
+      console.error("optimize visits failed", err);
+      setVisitsStatus("Não foi possível otimizar a ordem.", true);
+    }).then(function(){ btn.disabled = false; });
+  }
+
+  function visitDestination(id){
+    var p = visitPoint(id);
+    if (p) return p.lat.toFixed(6) + "," + p.lng.toFixed(6);
+    var c = visitClient(id);
+    return c && c.address ? c.address : null;
+  }
+  function wazeUrl(id){
+    var p = visitPoint(id), c = visitClient(id);
+    if (p) return "https://waze.com/ul?ll=" + p.lat.toFixed(6) + "," + p.lng.toFixed(6) + "&navigate=yes";
+    return c && c.address ? "https://waze.com/ul?q=" + encodeURIComponent(c.address) + "&navigate=yes" : null;
+  }
+  function openExternal(url){
+    var a = document.createElement("a");
+    a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer";
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  // Google Maps route from where the phone is, through the visits still to do (max 10 stops).
+  function openVisitsRoute(){
+    var stops = visitIdsFor(visitsDay).filter(function(id){ return !meetings[id].visit.done; })
+      .map(visitDestination).filter(Boolean);
+    if (!stops.length){ setVisitsStatus("Não há visitas por fazer com localização ou morada.", true); return; }
+    var cut = stops.length > 10;
+    stops = stops.slice(0, 10);
+    var dest = stops.pop();
+    var url = "https://www.google.com/maps/dir/?api=1&travelmode=driving&destination=" + encodeURIComponent(dest) +
+      (stops.length ? "&waypoints=" + encodeURIComponent(stops.join("|")) : "");
+    openExternal(url);
+    setVisitsStatus(cut ? "O Google Maps aceita até 10 paragens: abri as 10 primeiras." : "", false);
+  }
+
+  // Waze takes one destination at a time: the next visit still to do (in plan order).
+  function openNextInWaze(){
+    var next = visitIdsFor(visitsDay).filter(function(id){ return !meetings[id].visit.done && wazeUrl(id); })[0];
+    if (!next){ setVisitsStatus("Não há visitas por fazer com localização ou morada.", true); return; }
+    openExternal(wazeUrl(next));
+    var c = visitClient(next);
+    setVisitsStatus("A abrir o Waze para " + (c ? c.name : "a próxima visita") + ". Depois da visita, marca-a como feita (✓) e volta a tocar para seguir para a seguinte.", false);
+  }
+
+  function visitButton(cls, label, text, onClick){
+    var b = el("button", "icon-btn visit-btn " + cls);
+    b.type = "button"; b.textContent = text; b.title = label; b.setAttribute("aria-label", label);
+    b.addEventListener("click", function(e){ e.stopPropagation(); onClick(); });
+    return b;
+  }
+
+  function renderVisits(){
+    if (!document.getElementById("visitsList")) return;
+    if (!visitsDay) visitsDay = todayStr();
+    document.getElementById("visitsDayLabel").textContent = visitsDayLabel(visitsDay);
+    var ids = visitIdsFor(visitsDay);
+    var list = document.getElementById("visitsList");
+    list.innerHTML = "";
+    if (!ids.length){
+      list.appendChild(el("li", "hint visits-empty", "Sem visitas planeadas. Escolhe um cliente abaixo ou no mapa."));
+    }
+    var prev = null;
+    ids.forEach(function(id, i){
+      var m = meetings[id], c = visitClient(id), p = visitPoint(id);
+      var li = el("li", "visit-row" + (m.visit.done ? " is-done" : ""));
+      var num = el("span", "visit-num mono"); num.textContent = m.visit.done ? "✓" : String(i + 1);
+      if (c && c.color) num.style.borderColor = c.color;
+      li.appendChild(num);
+
+      var main = el("div", "visit-main");
+      var name = el("button", "visit-name"); name.type = "button";
+      name.textContent = c ? c.name : (m.title || "Cliente apagado");
+      name.title = "Abrir as notas da visita";
+      name.addEventListener("click", function(){ openMeetingModal(id); });
+      main.appendChild(name);
+      var sub = el("div", "visit-sub");
+      var bits = [];
+      if (c && c.address) bits.push(c.address);
+      else if (!p) bits.push("Sem localização — define-a em Clientes");
+      if (m.visit.done && m.visit.doneAt){
+        var t = new Date(m.visit.doneAt);
+        if (!isNaN(t.getTime())) bits.push("feita às " + String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0"));
+      }
+      sub.textContent = bits.join(" · ");
+      main.appendChild(sub);
+      // Distance from the previous visit; filled in once the road route arrives.
+      if (p && prev){ var leg = el("div", "visit-leg"); leg.dataset.visit = id; main.appendChild(leg); }
+      li.appendChild(main);
+      if (p) prev = p;
+
+      var actions = el("div", "visit-actions");
+      actions.appendChild(visitButton("visit-brief", "Resumo antes da visita", "☰", function(){ openBrief(id, false); }));
+      actions.appendChild(visitButton("", "Subir", "↑", function(){ moveVisit(id, -1); }));
+      actions.appendChild(visitButton("", "Descer", "↓", function(){ moveVisit(id, 1); }));
+      var waze = wazeUrl(id);
+      if (waze) actions.appendChild(visitButton("visit-nav", "Navegar até aqui (Waze)", "➤", function(){ openExternal(waze); }));
+      actions.appendChild(visitButton("visit-check" + (m.visit.done ? " is-set" : ""), m.visit.done ? "Marcar como por fazer" : "Marcar como visitado", "✓", function(){ toggleVisitDone(id); }));
+      actions.appendChild(visitButton("visit-remove", "Retirar do plano", "×", function(){ removeVisit(id); }));
+      li.appendChild(actions);
+      list.appendChild(li);
+    });
+
+    // Clients that can still be added, by name.
+    var sel = document.getElementById("visitsClientSelect");
+    var inPlan = {};
+    ids.forEach(function(id){ inPlan[meetings[id].clientId] = true; });
+    sel.innerHTML = "";
+    var first = el("option"); first.value = ""; first.textContent = "Escolhe um cliente…"; sel.appendChild(first);
+    Object.keys(clients).filter(function(cid){ return !inPlan[cid]; })
+      .sort(function(a, b){ return String(clients[a].name).localeCompare(String(clients[b].name), "pt", { sensitivity:"base" }); })
+      .forEach(function(cid){
+        var o = el("option"); o.value = cid;
+        o.textContent = clients[cid].name + (hasLocation(clients[cid]) || clients[cid].address ? "" : " (sem localização)");
+        sel.appendChild(o);
+      });
+
+    var pending = ids.filter(function(id){ return !meetings[id].visit.done; });
+    document.getElementById("visitsRouteBtn").disabled = !pending.length;
+    document.getElementById("visitsWazeBtn").disabled = !pending.some(function(id){ return wazeUrl(id); });
+    document.getElementById("visitsOptimizeBtn").disabled = pending.filter(visitPoint).length < 2;
+    syncArrivalWatch();
+    var doneN = ids.length - pending.length;
+    var locIds = ids.filter(visitPoint);
+    var pts = locIds.map(visitPoint);
+    var head = ids.length ? doneN + " de " + ids.length + " feita(s)" : "";
+    var summary = document.getElementById("visitsSummary");
+    summary.textContent = head + (pts.length > 1 ? " · a calcular a distância pela estrada…" : "");
+    drawVisitsOnMap(ids, null);
+    if (pts.length < 2) return;
+
+    var token = ++visitsRenderToken;
+    function fillLegs(legs, road){
+      Array.prototype.forEach.call(list.querySelectorAll(".visit-leg"), function(node){
+        var k = locIds.indexOf(node.dataset.visit) - 1, l = legs[k];
+        if (!l) return;
+        node.textContent = road
+          ? formatKm(l.km) + " km · " + formatMin(l.min) + " desde a anterior"
+          : "≈ " + formatKm(l.km) + " km em linha reta desde a anterior";
+      });
+    }
+    roadRoute(pts).then(function(r){
+      if (token !== visitsRenderToken) return;
+      summary.textContent = head + " · " + formatKm(r.km) + " km · " + formatMin(r.min) + " de condução";
+      fillLegs(r.legs, true);
+      drawVisitsOnMap(ids, r.line);
+    }, function(err){
+      if (token !== visitsRenderToken) return;
+      console.warn("road route failed", err);
+      summary.textContent = head + " · ≈ " + formatKm(pathKm(pts)) + " km em linha reta (sem ligação ao serviço de rotas)";
+      fillLegs(pts.slice(1).map(function(p, i){ return { km: haversineKm(pts[i], p) }; }), false);
+    });
+  }
+  var visitsRenderToken = 0;
+
+  // ---------- briefing before a visit (resumo antes da visita) ----------
+  // Built only from this app's data: last visits/meetings with the client and what is still open
+  // (meeting actions, tasks, active projects). Opens from the plan, or by itself on arrival.
+  var briefVisitId = null;
+  var ARRIVAL_METERS = 300;
+
+  function relDays(iso){
+    var d = daysBetween(iso, todayStr());
+    if (d === 0) return "hoje";
+    if (d === 1) return "ontem";
+    return d > 0 ? "há " + d + " dias" : "daqui a " + (-d) + " dias";
+  }
+  function clip(s, n){
+    s = String(s || "").replace(/\s+/g, " ").trim();
+    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+  }
+  function validIso(s){ return /^\d{4}-\d{2}-\d{2}$/.test(String(s || "")); }
+
+  function clientBrief(cid, exceptId){
+    var today = todayStr();
+    var mine = Object.keys(meetings).filter(function(id){ return id !== exceptId && meetings[id].clientId === cid; });
+    // Past contact: meetings up to today; planned visits count only once done or with notes.
+    var past = mine.filter(function(id){
+      var m = meetings[id];
+      if (!validIso(m.date) || m.date > today) return false;
+      return !m.visit || m.visit.done || m.notes || m.summary;
+    }).sort(function(a, b){
+      var ma = meetings[a], mb = meetings[b];
+      if (ma.date !== mb.date) return ma.date < mb.date ? 1 : -1;
+      return (mb.updatedAt || 0) - (ma.updatedAt || 0);
+    });
+    var actions = [];
+    mine.forEach(function(id){
+      (meetings[id].actions || []).forEach(function(a){
+        if (!a.done && a.text) actions.push({ text:a.text, date:meetings[id].date, meetingId:id });
+      });
+    });
+    actions.sort(function(a, b){ return String(a.date) < String(b.date) ? -1 : 1; });
+    var openTasks = Object.keys(tasks).filter(function(id){ return tasks[id].clientId === cid && tasks[id].status !== "done"; })
+      .sort(function(a, b){
+        var ta = tasks[a], tb = tasks[b];
+        var la = validIso(ta.due) && ta.due < today, lb = validIso(tb.due) && tb.due < today;
+        if (la !== lb) return la ? -1 : 1;
+        var pa = PRIORITY_ORDER[ta.priority] != null ? PRIORITY_ORDER[ta.priority] : 1;
+        var pb = PRIORITY_ORDER[tb.priority] != null ? PRIORITY_ORDER[tb.priority] : 1;
+        if (pa !== pb) return pa - pb;
+        return String(ta.due || "9999") < String(tb.due || "9999") ? -1 : 1;
+      });
+    var openProjects = Object.keys(projects).filter(function(id){
+      return projects[id].clientId === cid && projects[id].status !== "concluido";
+    }).map(function(id){
+      var steps = sortedSteps((projects[id].schedule || []).filter(function(s){ return s && !s.done; }));
+      return { id:id, next: steps[0] || null };
+    });
+    return { past:past, actions:actions, tasks:openTasks, projects:openProjects };
+  }
+
+  function briefSection(title, count){
+    var sec = el("section", "brief-section");
+    var h = el("h3", "brief-heading"); h.textContent = title + (count != null ? " (" + count + ")" : "");
+    sec.appendChild(h);
+    return sec;
+  }
+  function briefItem(list, text, extra, cls, onClick){
+    var li = el("li", "brief-item" + (cls ? " " + cls : ""));
+    var main = el(onClick ? "button" : "span", "brief-item-text");
+    if (onClick){ main.type = "button"; main.addEventListener("click", onClick); }
+    main.textContent = text;
+    li.appendChild(main);
+    if (extra){ var x = el("span", "brief-item-extra"); x.textContent = extra; li.appendChild(x); }
+    list.appendChild(li);
+  }
+  function closeBrief(){ document.getElementById("briefModalOverlay").hidden = true; briefVisitId = null; }
+  function goFromBrief(fn){ closeBrief(); fn(); }
+
+  function openBrief(visitId, arrived){
+    var m = meetings[visitId];
+    if (!m) return;
+    var cid = m.clientId, c = clients[cid];
+    briefVisitId = visitId;
+    var b = clientBrief(cid, visitId);
+    var today = todayStr();
+
+    document.getElementById("briefKicker").textContent = arrived ? "Chegaste ao cliente · resumo antes da visita" : "Resumo antes da visita";
+    document.getElementById("briefTitle").textContent = c ? c.name : (m.title || "Cliente");
+    var meta = [];
+    if (b.past.length){
+      var last = meetings[b.past[0]];
+      meta.push("Último contacto " + relDays(last.date) + " (" + formatDateShort(last.date) + ")");
+    } else meta.push("Sem contactos anteriores registados");
+    if (c && c.contact) meta.push(c.contact);
+    if (c && c.phone) meta.push(c.phone);
+    document.getElementById("briefMeta").textContent = meta.join(" · ");
+
+    var body = document.getElementById("briefBody");
+    body.innerHTML = "";
+
+    var openCount = b.actions.length + b.tasks.length + b.projects.length;
+    var open = briefSection("Temas em aberto", openCount);
+    var ol = el("ul", "brief-list");
+    b.actions.forEach(function(a){
+      briefItem(ol, a.text, "ação da reunião de " + formatDateShort(a.date), "is-action",
+        function(){ goFromBrief(function(){ openMeetingModal(a.meetingId); }); });
+    });
+    b.tasks.forEach(function(id){
+      var t = tasks[id], extra = [];
+      if (t.status === "doing") extra.push("em curso");
+      if (validIso(t.due)) extra.push(t.due < today ? "atrasada desde " + formatDateShort(t.due) : "prazo " + formatDateShort(t.due));
+      if (t.priority === "alta") extra.push("prioridade alta");
+      briefItem(ol, t.title || "Tarefa", extra.join(" · "), "is-task" + (validIso(t.due) && t.due < today ? " is-late" : ""),
+        function(){ goFromBrief(function(){ openTaskModal(id); }); });
+    });
+    b.projects.forEach(function(p){
+      var pr = projects[p.id];
+      var extra = (PROJECT_STATUS_LABEL[pr.status] || "Ativo") +
+        (p.next ? " · próxima etapa: " + clip(p.next.name, 60) + (validIso(p.next.due) ? " até " + formatDateShort(p.next.due) : "") : "");
+      briefItem(ol, "Projeto " + (pr.name || ""), extra, "is-project",
+        function(){ goFromBrief(function(){ openProjectModal(p.id); }); });
+    });
+    if (!openCount) ol.appendChild(el("li", "hint", "Nada em aberto com este cliente."));
+    open.appendChild(ol);
+    body.appendChild(open);
+
+    var hist = briefSection("Últimas visitas e reuniões", null);
+    var hl = el("ul", "brief-list");
+    b.past.slice(0, 3).forEach(function(id){
+      var pm = meetings[id];
+      var text = clip(pm.summary || pm.notes || pm.agenda, 280);
+      briefItem(hl, formatDateShort(pm.date) + " · " + (pm.visit ? "Visita" : (pm.title || "Reunião")), text || "Sem notas.", "is-meeting",
+        function(){ goFromBrief(function(){ openMeetingModal(id); }); });
+    });
+    if (!b.past.length) hl.appendChild(el("li", "hint", "Ainda não há visitas nem reuniões registadas com este cliente."));
+    if (b.past.length > 3){
+      var more = el("li", "hint"); more.textContent = "E mais " + (b.past.length - 3) + " no separador Reuniões."; hl.appendChild(more);
+    }
+    hist.appendChild(hl);
+    body.appendChild(hist);
+
+    document.getElementById("briefNotesBtn").textContent = m.visit && m.visit.done ? "Ver notas da visita" : "Escrever notas da visita";
+    document.getElementById("briefModalOverlay").hidden = false;
+    if (arrived && navigator.vibrate){ try { navigator.vibrate(200); } catch(e){} }
+  }
+
+  // ---------- arrival: open the briefing when the phone gets to a client of today's plan ----------
+  // Works while the app is open on screen (a web app can't follow the location in the background);
+  // it also checks once each time the app comes back to the front. Never asks for location by itself.
+  var arrivalWatch = null, geoPermission = null;
+  function briefShownKey(){ return "qt_brief_shown:" + todayStr(); }
+  function briefShown(){ try { return JSON.parse(sessionStorage.getItem(briefShownKey()) || "{}"); } catch(e){ return {}; } }
+  function markBriefShown(id){
+    var s = briefShown(); s[id] = 1;
+    try { sessionStorage.setItem(briefShownKey(), JSON.stringify(s)); } catch(e){}
+  }
+  function pendingTodayVisits(){
+    return visitIdsFor(todayStr()).filter(function(id){ return !meetings[id].visit.done && visitPoint(id); });
+  }
+  function anyModalOpen(){ return !!document.querySelector(".modal-overlay:not([hidden])"); }
+  function checkArrival(pos){
+    if (!pos || !pos.coords) return;
+    var acc = Number(pos.coords.accuracy) || 0;
+    if (acc > 1000) return;
+    var here = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+    var shown = briefShown(), best = null, bestM = Infinity;
+    pendingTodayVisits().forEach(function(id){
+      if (shown[id]) return;
+      var d = haversineKm(here, visitPoint(id)) * 1000;
+      if (d < bestM){ bestM = d; best = id; }
+    });
+    if (best && bestM <= ARRIVAL_METERS + Math.min(acc, 200) && !anyModalOpen()){
+      markBriefShown(best);
+      openBrief(best, true);
+    }
+  }
+  function stopArrivalWatch(){
+    if (arrivalWatch != null && navigator.geolocation){ navigator.geolocation.clearWatch(arrivalWatch); }
+    arrivalWatch = null;
+    updateArrivalHint();
+  }
+  function startArrivalWatch(){
+    if (arrivalWatch != null || !navigator.geolocation) return;
+    arrivalWatch = navigator.geolocation.watchPosition(checkArrival, function(err){
+      if (err && err.code === 1){ geoPermission = "denied"; stopArrivalWatch(); }
+    }, { enableHighAccuracy:true, maximumAge:60000, timeout:30000 });
+    updateArrivalHint();
+  }
+  function syncArrivalWatch(){
+    var want = !document.hidden && pendingTodayVisits().length > 0;
+    if (!want){ stopArrivalWatch(); return; }
+    if (geoPermission === "granted"){ startArrivalWatch(); return; }
+    if (geoPermission === null && navigator.permissions && navigator.permissions.query){
+      geoPermission = "checking";
+      navigator.permissions.query({ name:"geolocation" }).then(function(st){
+        geoPermission = st.state;
+        st.onchange = function(){ geoPermission = st.state; syncArrivalWatch(); };
+        syncArrivalWatch();
+      }).catch(function(){ geoPermission = "prompt"; updateArrivalHint(); });
+      return;
+    }
+    updateArrivalHint();
+  }
+  function enableArrival(){
+    if (!navigator.geolocation){ setVisitsStatus("Este navegador não dá acesso à localização.", true); return; }
+    navigator.geolocation.getCurrentPosition(function(pos){
+      geoPermission = "granted";
+      syncArrivalWatch();
+      checkArrival(pos);
+      setVisitsStatus("Aviso à chegada ativo: com a app aberta, o resumo aparece quando chegares a cada cliente.", false);
+    }, function(){
+      setVisitsStatus("Sem acesso à localização: o resumo só abre pelo botão de cada visita.", true);
+    }, { enableHighAccuracy:true, timeout:15000 });
+  }
+  function updateArrivalHint(){
+    var btn = document.getElementById("visitsArrivalBtn"), hint = document.getElementById("visitsArrivalHint");
+    if (!btn || !hint) return;
+    var hasToday = pendingTodayVisits().length > 0;
+    var watching = arrivalWatch != null;
+    hint.hidden = !(hasToday && watching);
+    btn.hidden = !(hasToday && !watching && geoPermission !== "denied" && geoPermission !== "granted" && geoPermission !== "checking");
+  }
+
+  // Numbered pins and the planned route on the Início map.
+  // `road` = the road route's line ([[lat,lng],…]); null draws a dashed straight line meanwhile.
+  function drawVisitsOnMap(ids, road){
+    if (!homeMap || !mapsAvailable()) return;
+    if (!visitsLayer) visitsLayer = window.L.layerGroup().addTo(homeMap);
+    visitsLayer.clearLayers();
+    var pts = [];
+    ids.forEach(function(id, i){
+      var p = visitPoint(id);
+      if (!p) return;
+      pts.push([p.lat, p.lng]);
+      var done = meetings[id].visit.done;
+      window.L.marker([p.lat, p.lng], {
+        icon: window.L.divIcon({ className: "visit-pin" + (done ? " is-done" : ""), html: done ? "✓" : String(i + 1), iconSize: [24, 24], iconAnchor: [12, 12] }),
+        keyboard: false, zIndexOffset: 1000
+      }).addTo(visitsLayer);
+    });
+    if (road && road.length > 1) window.L.polyline(road, { color: "#4F46E5", weight: 4, opacity: .75 }).addTo(visitsLayer);
+    else if (pts.length > 1) window.L.polyline(pts, { color: "#4F46E5", weight: 3, opacity: .5, dashArray: "6 6" }).addTo(visitsLayer);
+  }
+
   // ---------- clients map (Leaflet + OpenStreetMap) ----------
   // Each client may have { address, lat, lng }. The Início shows them on a map; the location is
   // set in the Clientes page (address search or a click on the map). Map tiles come from
@@ -2918,8 +3649,12 @@
       var n = openTaskCount(cid);
       var meta = el("div", "map-popup-meta"); meta.textContent = n === 1 ? "1 tarefa aberta" : n + " tarefas abertas";
       pop.appendChild(meta);
+      var planBtn = el("button", "btn btn-ghost btn-sm map-popup-plan");
+      planBtn.type = "button"; planBtn.textContent = "+ Plano de visitas";
+      planBtn.addEventListener("click", function(){ addVisit(cid); homeMap.closePopup(); });
+      pop.appendChild(planBtn);
       marker.bindPopup(pop);
-      marker.bindTooltip(c.name, { direction:"top", offset:[0, -8] });
+      marker.bindTooltip(escapeHtml(c.name), { direction:"top", offset:[0, -8] });
       marker.addTo(homeMapLayer);
       bounds.push([c.lat, c.lng]);
     });
@@ -3048,7 +3783,7 @@
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = url;
-    a.download = "quadro-tarefas-copia-" + todayStr() + ".json";
+    a.download = "nuvanea-copia-" + todayStr() + ".json";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -3061,7 +3796,9 @@
       var parsed;
       try { parsed = JSON.parse(reader.result); }
       catch(e){ alert("Este ficheiro não é uma cópia de segurança válida."); return; }
-      if (!parsed || typeof parsed !== "object" || !parsed.clients || !parsed.tasks){
+      function isMap(v){ return v == null || (typeof v === "object" && !Array.isArray(v)); }
+      if (!parsed || typeof parsed !== "object" || !parsed.clients || !parsed.tasks ||
+          !["clients","tasks","meetings","projects","expenses"].every(function(k){ return isMap(parsed[k]); })){
         alert("Este ficheiro não parece ser uma cópia de segurança deste quadro.");
         return;
       }
@@ -3209,6 +3946,29 @@
       if (e.key === "Enter"){ e.preventDefault(); addPointDraft(); }
     });
     document.getElementById("homePrevMonthBtn").addEventListener("click", function(){ shiftHomeMonth(-1); });
+    document.getElementById("visitsPrevDayBtn").addEventListener("click", function(){ visitsDay = shiftIso(visitsDay || todayStr(), -1); setVisitsStatus(""); renderVisits(); });
+    document.getElementById("visitsNextDayBtn").addEventListener("click", function(){ visitsDay = shiftIso(visitsDay || todayStr(), 1); setVisitsStatus(""); renderVisits(); });
+    document.getElementById("visitsDayLabel").addEventListener("click", function(){ visitsDay = todayStr(); setVisitsStatus(""); renderVisits(); });
+    document.getElementById("visitsAddBtn").addEventListener("click", function(){
+      var sel = document.getElementById("visitsClientSelect");
+      if (!sel.value){ setVisitsStatus("Escolhe primeiro o cliente.", true); sel.focus(); return; }
+      addVisit(sel.value);
+    });
+    document.getElementById("visitsOptimizeBtn").addEventListener("click", optimizeVisits);
+    document.getElementById("visitsRouteBtn").addEventListener("click", openVisitsRoute);
+    document.getElementById("visitsWazeBtn").addEventListener("click", openNextInWaze);
+    document.getElementById("visitsArrivalBtn").addEventListener("click", enableArrival);
+    document.getElementById("briefCloseBtn").addEventListener("click", closeBrief);
+    document.getElementById("briefNotesBtn").addEventListener("click", function(){
+      var id = briefVisitId;
+      closeBrief();
+      if (id && meetings[id]) openMeetingModal(id);
+    });
+    document.getElementById("briefModalOverlay").addEventListener("click", function(e){ if (e.target === e.currentTarget) closeBrief(); });
+    document.addEventListener("visibilitychange", function(){
+      if (document.hidden){ stopArrivalWatch(); return; }
+      syncArrivalWatch();
+    });
     document.getElementById("homeNextMonthBtn").addEventListener("click", function(){ shiftHomeMonth(1); });
     document.getElementById("addMeetingBottomBtn").addEventListener("click", function(){ openMeetingModal(null); });
     document.getElementById("addProjectBottomBtn").addEventListener("click", function(){ openProjectModal(null); });
@@ -3291,7 +4051,11 @@
         }
       });
     });
-    document.getElementById("excelSyncRetryBtn").addEventListener("click", function(){ runExcelSync(true); });
+    document.getElementById("excelSyncRetryBtn").addEventListener("click", function(){
+      if (window.QuadroDrive && !window.QuadroDrive.connected()) window.QuadroDrive.connect();
+      else runExcelSync(true);
+    });
+    document.getElementById("driveConnectBtn").addEventListener("click", function(){ window.QuadroDrive.connect(); });
     document.getElementById("expenseAmount").addEventListener("input", function(){
       document.getElementById("expenseAmountError").hidden = true;
     });
@@ -3370,6 +4134,7 @@
         if (!document.getElementById("dayExpensesModalOverlay").hidden) closeDayExpensesModal();
         if (!document.getElementById("locationModalOverlay").hidden){ closeLocationModal(); return; }
         if (!document.getElementById("clientModalOverlay").hidden) closeClientModal();
+        if (!document.getElementById("briefModalOverlay").hidden) closeBrief();
       }
     });
   }
