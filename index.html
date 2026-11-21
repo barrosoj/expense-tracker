@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org; font-src 'self' data:; connect-src 'self' https://koqetdjtgecjpmckzeld.supabase.co https://cdn.jsdelivr.net https://tessdata.projectnaptha.com https://nominatim.openstreetmap.org; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
-<title>Quadro de Tarefas</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://tile.openstreetmap.org; font-src 'self' data:; connect-src 'self' https://koqetdjtgecjpmckzeld.supabase.co https://cdn.jsdelivr.net https://tessdata.projectnaptha.com https://nominatim.openstreetmap.org https://router.project-osrm.org https://www.googleapis.com; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'" />
+<title>Nuvanea</title>
 <!-- iOS: torna possível "Adicionar ao ecrã principal" e abrir em ecrã inteiro, sem a barra do Safari -->
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-<meta name="apple-mobile-web-app-title" content="Quadro Tarefas" />
+<meta name="apple-mobile-web-app-title" content="Nuvanea" />
 <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)" />
 <meta name="theme-color" content="#0B0D12" media="(prefers-color-scheme: dark)" />
 <link rel="apple-touch-icon" href="icon.png" />
@@ -24,7 +24,7 @@
 <div class="auth-screen" id="authScreen" hidden>
   <div class="auth-card">
     <img src="brand/logo-simbolo.svg" alt="" class="auth-logo" width="56" height="56" />
-    <h1>Quadro de Tarefas</h1>
+    <h1>Nuvanea</h1>
     <p class="subtitle">Entra para sincronizar os teus dados entre dispositivos.</p>
 
     <div id="authStepEmail">
@@ -68,7 +68,7 @@
   <header class="topbar">
     <div class="topbar-main">
       <img src="brand/logo-simbolo.svg" alt="" class="brand-mark" width="28" height="28" />
-      <h1>Quadro de Tarefas</h1>
+      <h1>Nuvanea</h1>
       <p class="subtitle">Funciona offline — guarda neste dispositivo e sincroniza com a nuvem quando estás online.</p>
     </div>
     <div class="topbar-actions">
@@ -105,6 +105,11 @@
     <button id="dismissWarning">Percebido</button>
   </div>
 
+  <div class="banner" id="driveConnectBanner" hidden>
+    <span>Liga ao Google Drive para ver as compras e vendas e gravar as despesas no Excel.</span>
+    <button id="driveConnectBtn">Ligar ao Google Drive</button>
+  </div>
+
   <div class="banner" id="installAppBanner" hidden>
     <span>Para usar isto como app, com ícone próprio e em ecrã inteiro: toca no ícone de Partilhar (quadrado com seta) e depois em "Adicionar ao Ecrã Principal".</span>
     <button id="dismissInstallBanner">Percebido</button>
@@ -113,6 +118,19 @@
   <div class="filters" id="filters"></div>
 
   <section class="home-view" id="homeView" hidden>
+    <section class="home-agenda" id="homeAgenda" aria-labelledby="agendaTitle">
+      <div class="home-map-head">
+        <h2 class="home-brands-title" id="agendaTitle">Agenda</h2>
+        <div class="month-nav visits-day-nav">
+          <button type="button" class="icon-btn" id="agendaPrevBtn" title="Semana anterior" aria-label="Semana anterior">‹</button>
+          <button type="button" class="visits-day-label" id="agendaRangeLabel"></button>
+          <button type="button" class="icon-btn" id="agendaNextBtn" title="Semana seguinte" aria-label="Semana seguinte">›</button>
+        </div>
+      </div>
+      <span class="home-map-count" id="agendaSummary"></span>
+      <div class="agenda-days" id="agendaDays"></div>
+    </section>
+
     <div class="home-toolbar">
       <div class="month-nav">
         <button type="button" class="icon-btn" id="homePrevMonthBtn" title="Mês anterior">‹</button>
@@ -133,6 +151,31 @@
         <span class="home-card-hint" id="homePurchaseHint"></span>
       </article>
     </div>
+
+    <section class="home-visits" id="homeVisits" aria-labelledby="visitsTitle">
+      <div class="home-map-head">
+        <h2 class="home-brands-title" id="visitsTitle">Plano de visitas</h2>
+        <div class="month-nav visits-day-nav">
+          <button type="button" class="icon-btn" id="visitsPrevDayBtn" title="Dia anterior" aria-label="Dia anterior">‹</button>
+          <button type="button" class="visits-day-label" id="visitsDayLabel" title="Voltar a hoje"></button>
+          <button type="button" class="icon-btn" id="visitsNextDayBtn" title="Dia seguinte" aria-label="Dia seguinte">›</button>
+        </div>
+      </div>
+      <span class="home-map-count" id="visitsSummary"></span>
+      <ol class="visits-list" id="visitsList"></ol>
+      <div class="visits-add field">
+        <select id="visitsClientSelect" aria-label="Cliente a visitar"></select>
+        <button type="button" class="btn btn-ghost btn-sm" id="visitsAddBtn">+ Adicionar</button>
+      </div>
+      <div class="visits-actions">
+        <button type="button" class="btn btn-ghost btn-sm" id="visitsOptimizeBtn">Otimizar ordem</button>
+        <button type="button" class="btn btn-primary btn-sm" id="visitsRouteBtn">Abrir rota no Google Maps</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="visitsWazeBtn" title="O Waze só aceita um destino de cada vez">Próxima visita no Waze</button>
+      </div>
+      <p class="hint visits-status" id="visitsStatus" role="status" aria-live="polite"></p>
+      <button type="button" class="link-btn visits-arrival-btn" id="visitsArrivalBtn" hidden>Mostrar o resumo de cada cliente quando lá chegar</button>
+      <p class="hint visits-arrival-hint" id="visitsArrivalHint" hidden>Aviso à chegada ativo: com a app aberta, o resumo do cliente aparece quando chegares.</p>
+    </section>
 
     <section class="home-brands">
       <h2 class="home-brands-title">Compras por marca</h2>
@@ -298,6 +341,21 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="briefModalOverlay" hidden>
+  <div class="modal modal-lg brief-modal" role="dialog" aria-modal="true" aria-labelledby="briefTitle">
+    <p class="brief-kicker" id="briefKicker">Resumo antes da visita</p>
+    <h2 id="briefTitle"></h2>
+    <p class="brief-meta" id="briefMeta"></p>
+    <div class="brief-body" id="briefBody"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="briefCloseBtn">Fechar</button>
+      <div class="modal-actions-right">
+        <button class="btn btn-primary" id="briefNotesBtn">Escrever notas da visita</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="meetingModalOverlay" hidden>
   <div class="modal modal-lg" role="dialog" aria-modal="true" aria-labelledby="meetingModalTitle">
     <h2 id="meetingModalTitle">Nova reunião</h2>
@@ -310,6 +368,10 @@
       <div class="field">
         <label for="meetingDate">Data</label>
         <input type="date" id="meetingDate" />
+      </div>
+      <div class="field meeting-time-field">
+        <label for="meetingTime">Hora</label>
+        <input type="time" id="meetingTime" step="300" />
       </div>
     </div>
 
@@ -438,9 +500,9 @@
     </div>
 
     <div class="receipt-scan field">
-      <button type="button" class="btn btn-ghost btn-sm" id="scanReceiptBtn">Fotografar recibo</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="scanReceiptBtn">Fotografar fatura</button>
       <input type="file" id="receiptFileInput" accept="image/*" capture="environment" hidden />
-      <span class="receipt-scan-status" id="receiptScanStatus" role="status" aria-live="polite">A foto sugere os campos; confirma ou edita antes de guardar.</span>
+      <span class="receipt-scan-status" id="receiptScanStatus" role="status" aria-live="polite">A foto lê o código QR da fatura (ou o texto do talão); confirma antes de guardar.</span>
     </div>
 
     <div class="field">
@@ -679,8 +741,10 @@
 <script src="vendor/leaflet/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" integrity="sha384-GJqSu7vueQ9qN0E9yLPb3Wtpd7OrgK8KmYzC8T1IysG1bcvxvIO4qtYR/D3A991F" crossorigin="anonymous"></script>
 <script src="receipt.js"></script>
+<script src="invoice-qr.js"></script>
 <script src="xlsx-reader.js"></script>
 <script src="excel-writer.js"></script>
+<script src="drive.js"></script>
 <script src="app.js"></script>
 <script src="sync.js"></script>
 <script src="auth.js"></script>

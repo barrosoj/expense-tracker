@@ -1,4 +1,4 @@
-# Quadro de Tarefas — despesas pessoais e profissionais
+# Nuvanea — despesas pessoais e profissionais
 
 Uma aplicação simples para acompanhar despesas e organizar tarefas, reuniões e projetos. Abre no computador ou telemóvel e pode continuar a ser usada sem ligação à internet.
 
@@ -7,6 +7,10 @@ Uma aplicação simples para acompanhar despesas e organizar tarefas, reuniões 
 ## Funcionalidades
 
 - **Despesas:** regista data, valor, categoria, fornecedor, descrição e cliente. Consulta totais por categoria e por dia, mês a mês, e exporta as despesas mensais em CSV.
+- **Faturas por código QR:** em "Fotografar fatura", a app lê o código QR das faturas portuguesas e preenche data, valor e descrição; guarda o NIF do vendedor, o número do documento, o ATCUD e o IVA, avisa se a fatura já foi registada e inclui estes dados na exportação CSV. Tudo é lido no próprio dispositivo, sem internet; sem QR legível, usa a leitura de texto do talão.
+- **Plano de visitas:** no Início, escolhe os clientes a visitar em cada dia (na lista ou no mapa), otimiza a ordem pela estrada a partir da tua localização (vês os km e o tempo de condução entre visitas), abre a rota no Google Maps ou segue visita a visita no Waze ("Próxima visita no Waze" ou ➤ em cada cliente), e marca cada visita como feita. Cada visita fica nas Reuniões, onde escreves as notas. As distâncias pela estrada vêm do serviço de rotas do OpenStreetMap (OSRM), ao qual só são enviadas as coordenadas das visitas; sem ligação, a app usa distâncias em linha reta.
+- **Agenda no Início:** os próximos 7 dias numa só lista — reuniões (com hora), visitas do plano, prazos de tarefas e etapas de projetos — com os prazos em atraso no topo, navegação por semana e "+" em cada dia para marcar uma reunião.
+- **Resumo antes da visita:** em cada visita do plano (botão ☰), ou sozinho quando chegas a menos de ~300 m do cliente com a app aberta, mostra o último contacto, as notas das últimas visitas e reuniões e os temas em aberto: ações de reuniões por fazer, tarefas (atrasadas primeiro) e projetos ativos com a próxima etapa.
 - **Tarefas:** organiza tarefas por estado, prioridade, cliente e prazo.
 - **Reuniões:** guarda preparação, notas, resumo e ações a acompanhar.
 - **Projetos:** acompanha estado, descrição e documentos anexados.

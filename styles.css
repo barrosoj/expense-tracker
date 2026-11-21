@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Quadro de Tarefas — design system
+   Nuvanea — design system
    Clean, neutral surfaces, one accent colour, thin borders and soft shadows.
    ========================================================================== */
 :root{
@@ -880,3 +880,104 @@ table.expenses-table{ width:100%; min-width:600px; border-collapse:collapse; fon
   .ptl-item, .ptl-today{ grid-template-columns:54px 16px minmax(0,1fr); column-gap:8px; }
   .ptl-date{ font-size:11px; white-space:normal; }
 }
+
+/* ---------- plano de visitas ---------- */
+.home-visits{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-l); box-shadow:var(--shadow); padding:18px 22px 16px; display:flex; flex-direction:column; gap:10px; }
+.home-visits .home-brands-title{ margin:0; }
+.visits-day-nav{ display:flex; align-items:center; gap:4px; }
+.visits-day-label{ border:none; background:transparent; color:var(--text); font:inherit; font-size:13px; font-weight:600; padding:4px 6px; border-radius:6px; cursor:pointer; min-width:150px; }
+.visits-day-label:hover{ background:var(--surface-2); }
+.visits-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.visits-empty{ padding:6px 0; }
+.visit-row{ display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border); border-radius:var(--radius-m); background:var(--surface); }
+.visit-row.is-done{ background:var(--surface-2); }
+.visit-row.is-done .visit-name{ color:var(--text-muted); text-decoration:line-through; }
+.visit-num{ flex:none; width:26px; height:26px; border-radius:50%; border:2px solid var(--accent); display:grid; place-items:center; font-size:12px; font-weight:700; color:var(--text); }
+.visit-row.is-done .visit-num{ border-color:var(--success); color:var(--success); }
+.visit-main{ flex:1; min-width:0; }
+.visit-name{ border:none; background:none; padding:0; font:inherit; font-weight:600; font-size:14px; color:var(--text); cursor:pointer; text-align:left; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block; }
+.visit-name:hover{ color:var(--accent); }
+.visit-sub{ font-size:12px; color:var(--text-faint); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.visit-leg{ font-size:12px; color:var(--text-muted); }
+.visit-leg:empty{ display:none; }
+.visit-actions{ flex:none; display:flex; gap:2px; }
+.visit-btn{ width:30px; height:30px; font-size:14px; }
+.visit-check.is-set{ color:var(--success); }
+.visits-add{ display:flex; gap:8px; margin:0; flex-direction:row; align-items:center; }
+.visits-add select{ flex:1; min-width:0; }
+.visits-actions{ display:flex; gap:8px; flex-wrap:wrap; }
+.visits-status{ margin:0; min-height:1em; }
+.visits-status.error{ color:var(--danger, #DC2626); }
+.visit-pin{ background:var(--accent); color:#fff; border:2px solid #fff; border-radius:50%; display:grid; place-items:center; font:700 12px/1 system-ui, sans-serif; box-shadow:0 1px 4px rgba(0,0,0,.35); }
+.visit-pin.is-done{ background:var(--success); }
+.map-popup-plan{ margin-top:8px; width:100%; }
+.visit-badge{ color:var(--accent); background:var(--accent-soft); }
+.visit-badge.is-done{ color:var(--success); background:var(--success-soft); }
+@media (max-width:480px){
+  .home-visits{ padding:14px 14px 12px; }
+  .visits-day-label{ min-width:0; }
+  .visit-row{ flex-wrap:wrap; }
+  .visit-actions{ width:100%; justify-content:flex-end; }
+  .visit-btn{ width:36px; height:36px; }
+  .visits-actions .btn{ flex:1; }
+}
+
+/* ---------- agenda (Início) ---------- */
+.home-agenda{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-l); box-shadow:var(--shadow); padding:18px 22px 16px; display:flex; flex-direction:column; gap:10px; margin-bottom:16px; }
+.home-agenda .home-brands-title{ margin:0; }
+.agenda-days{ display:flex; flex-direction:column; }
+.agenda-day{ border-top:1px solid var(--border); padding:7px 0; }
+.agenda-day:first-child, .agenda-late + .agenda-day{ border-top:none; }
+.agenda-day-head{ display:flex; align-items:center; gap:8px; min-height:28px; }
+.agenda-day-name{ font-weight:600; font-size:13.5px; text-transform:capitalize; min-width:70px; }
+.agenda-day-date{ font-size:12.5px; color:var(--text-muted); }
+.agenda-free{ font-size:12.5px; color:var(--text-faint); }
+.agenda-add{ margin-left:auto; width:28px; height:28px; font-size:16px; opacity:.55; }
+.agenda-day:hover .agenda-add, .agenda-add:focus-visible{ opacity:1; }
+.agenda-day.is-today .agenda-day-name{ color:var(--accent); }
+.agenda-day.is-past{ opacity:.7; }
+.agenda-list{ display:flex; flex-direction:column; gap:4px; margin-top:4px; }
+.agenda-item{ display:flex; align-items:flex-start; gap:10px; width:100%; text-align:left; font:inherit; color:var(--text); background:var(--surface-2); border:1px solid transparent; border-left:3px solid var(--accent); border-radius:var(--radius-s); padding:7px 10px; cursor:pointer; }
+.agenda-item:hover{ background:var(--surface-3); }
+.agenda-item.agenda-visita{ border-left-color:var(--info); }
+.agenda-item.agenda-tarefa{ border-left-color:var(--warn); }
+.agenda-item.agenda-etapa{ border-left-color:var(--success); }
+.agenda-item.is-done .agenda-title{ text-decoration:line-through; color:var(--text-muted); }
+.agenda-time{ flex:none; width:48px; font-size:12.5px; color:var(--text-muted); padding-top:1px; }
+.agenda-main{ display:flex; flex-direction:column; gap:2px; min-width:0; flex:1; }
+.agenda-title{ font-size:13.5px; overflow-wrap:anywhere; }
+.agenda-kind{ font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.03em; color:var(--text-muted); margin-right:6px; }
+.agenda-sub{ font-size:12px; color:var(--text-muted); display:flex; align-items:center; gap:6px; }
+.agenda-flag{ flex:none; font-size:11.5px; color:var(--success); background:var(--success-soft); border-radius:999px; padding:2px 8px; }
+.agenda-late{ background:var(--danger-soft); border-radius:var(--radius-m); padding:6px 10px 8px; margin-bottom:4px; }
+.agenda-late-head{ cursor:pointer; color:var(--danger); font-weight:600; font-size:13px; padding:2px 0; }
+.agenda-late .agenda-item{ margin-top:4px; background:var(--surface); border-left-color:var(--danger); }
+.meeting-time-field{ max-width:130px; }
+@media (max-width:480px){
+  .home-agenda{ padding:14px 14px 12px; }
+  .agenda-add{ opacity:1; width:36px; height:36px; }
+  .agenda-time{ width:44px; }
+  .meeting-time-field{ max-width:none; }
+}
+
+/* ---------- resumo antes da visita ---------- */
+.brief-kicker{ margin:0 0 2px; font-size:12px; font-weight:600; color:var(--accent); text-transform:uppercase; letter-spacing:.04em; }
+.brief-modal h2{ margin:0; }
+.brief-meta{ margin:4px 0 12px; font-size:13px; color:var(--text-muted); }
+.brief-body{ display:flex; flex-direction:column; gap:14px; }
+.brief-heading{ margin:0 0 6px; font-size:13px; font-weight:600; color:var(--text); }
+.brief-list{ list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.brief-item{ display:flex; flex-direction:column; gap:2px; padding:8px 10px; border:1px solid var(--border); border-left:3px solid var(--border-strong); border-radius:8px; background:var(--surface); }
+.brief-item.is-action{ border-left-color:var(--warn, #D97706); }
+.brief-item.is-task{ border-left-color:var(--accent); }
+.brief-item.is-late{ border-left-color:var(--danger); }
+.brief-item.is-project{ border-left-color:var(--success); }
+.brief-item-text{ border:none; background:none; padding:0; font:inherit; font-size:14px; font-weight:600; color:var(--text); text-align:left; cursor:pointer; }
+span.brief-item-text{ cursor:default; }
+.brief-item-text:hover{ color:var(--accent); }
+.brief-item-extra{ font-size:12.5px; color:var(--text-muted); white-space:pre-line; }
+.brief-item.is-late .brief-item-extra{ color:var(--danger); }
+.brief-item.is-meeting .brief-item-text{ font-weight:600; font-size:13px; color:var(--text-muted); }
+.brief-item.is-meeting .brief-item-extra{ font-size:13.5px; color:var(--text); }
+.visits-arrival-btn{ align-self:flex-start; border:none; background:none; padding:0; font:inherit; font-size:12.5px; color:var(--accent); cursor:pointer; text-decoration:underline; }
+.visits-arrival-hint{ margin:0; color:var(--success); }
