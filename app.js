@@ -3783,7 +3783,7 @@
     var url = URL.createObjectURL(blob);
     var a = document.createElement("a");
     a.href = url;
-    a.download = "quadro-tarefas-copia-" + todayStr() + ".json";
+    a.download = "nuvanea-copia-" + todayStr() + ".json";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

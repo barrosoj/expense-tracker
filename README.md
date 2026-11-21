@@ -1,4 +1,4 @@
-# Quadro de Tarefas — despesas pessoais e profissionais
+# Nuvanea — despesas pessoais e profissionais
 
 Uma aplicação simples para acompanhar despesas e organizar tarefas, reuniões e projetos. Abre no computador ou telemóvel e pode continuar a ser usada sem ligação à internet.
 

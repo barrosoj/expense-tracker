@@ -1,4 +1,4 @@
--- Quadro de Tarefas — database schema for Supabase (Postgres).
+-- Nuvanea — database schema for Supabase (Postgres).
 -- Run once in: Supabase Dashboard → SQL Editor → New query → paste → Run.
 -- Safe to re-run (idempotent).
 --
