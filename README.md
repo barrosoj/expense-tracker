@@ -2,7 +2,7 @@
 
 Uma aplicação simples para acompanhar despesas e organizar tarefas, reuniões e projetos. Abre no computador ou telemóvel e pode continuar a ser usada sem ligação à internet.
 
-**Abrir a aplicação:** https://barrosoj.github.io/expense-tracker/
+**Abrir a aplicação:** https://nuvanea.pt/
 
 ## Funcionalidades
 
